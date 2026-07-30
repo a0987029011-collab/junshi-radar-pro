@@ -1,0 +1,181 @@
+{
+  "meta": {
+    "name": "軍師雷達 A 級策略",
+    "version": "1.1.0-verified-snapshot",
+    "mode": "verified-delayed-snapshot",
+    "disclaimer": "本系統為研究與人工審核工具，不構成投資建議。最新行情為盤後快照，並非即時報價；未接入的籌碼條件不得視為符合。"
+  },
+  "risk": {
+    "totalCapital": 600000,
+    "defaultAllocationPerStock": 60000,
+    "maxLossPerTrade": 12000,
+    "commissionRate": 0.001425,
+    "commissionDiscount": 0.3,
+    "minimumCommission": 20,
+    "stockTransactionTaxRate": 0.003
+  },
+  "universe": {
+    "market": "TWSE_TPEx",
+    "minimumPaidInCapital": 2000000000,
+    "minimumAverageDailyVolumeLots": 1000,
+    "excludeETFs": true,
+    "excludeWarrants": true
+  },
+  "weights": {
+    "monthlyTrend": 20,
+    "weeklyTrend": 20,
+    "dailyBreakout": 20,
+    "macd": 10,
+    "dpo": 10,
+    "keyLevel": 10,
+    "chipStructure": 10
+  },
+  "structureQualityWeights": {
+    "consolidationDuration": 4,
+    "trendlineTouches": 4,
+    "keyLevelTests": 4,
+    "monthlyHistogramDuration": 4,
+    "cleanRetest": 4
+  },
+  "indicators": {
+    "signalScoreBullishMinimum": 0.75,
+    "macd": {
+      "fast": 12,
+      "slow": 26,
+      "signal": 9,
+      "nearZeroThresholdPercent": 0.6,
+      "preferHistogramContracting": true
+    },
+    "dpo": {
+      "period": 21,
+      "preferAboveZero": true,
+      "acceptRisingBelowZero": true
+    },
+    "volume": {
+      "breakoutMultiplier": 1.5,
+      "pullbackVolumeRatioMax": 0.8
+    }
+  },
+  "patterns": {
+    "multiTimeframeResonance": {
+      "enabled": true,
+      "timeframes": ["day", "week", "month"],
+      "requireAllRisingForTopTier": true
+    },
+    "shrinkingHistogramSupport": {
+      "enabled": true,
+      "description": "MACD 柱體縮短後，對應價格低點長時間未被跌破。",
+      "timeframePriority": ["month", "week", "day"],
+      "minimumBarsUnbroken": {
+        "day": 20,
+        "week": 8,
+        "month": 3
+      }
+    },
+    "keyLevel": {
+      "enabled": true,
+      "sources": [
+        "bearishEngulfing",
+        "importantLow",
+        "shrinkingHistogramLow",
+        "postBreakoutPullbackLow"
+      ],
+      "reclaimedLevelIsResearchOnly": true
+    },
+    "descendingTrendlineBreakout": {
+      "enabled": true,
+      "minimumTouchPoints": 2,
+      "preferredTouchPoints": 3,
+      "detectOpenBreakout": true,
+      "detectIntradayBreakout": true,
+      "requireCloseConfirmationForTopTier": true,
+      "prioritizeFirstHealthyRetest": true
+    },
+    "previousKeyCandleLowStop": {
+      "enabled": true,
+      "appliesTo": "firstPostBreakoutConsolidation",
+      "bufferPercent": 0
+    }
+  },
+  "classificationRules": {
+    "S": {
+      "label": "S 級狙擊",
+      "minimumRiskReward": 2,
+      "requires": [
+        "multiTimeframeResonance",
+        "confirmedTrendlineBreakout",
+        "macdBullish",
+        "dpoAboveZeroAndRising",
+        "successfulRetest",
+        "shrinkingHistogramSupport",
+        "chipStructureStable",
+        "riskRewardAtLeast2"
+      ]
+    },
+    "A": {
+      "label": "A 級突破",
+      "requires": ["confirmedTrendlineBreakout"]
+    },
+    "A+": {
+      "label": "A+ 突破後整理",
+      "requires": [
+        "confirmedTrendlineBreakout",
+        "multiTimeframeResonance",
+        "healthyConsolidation",
+        "indicatorsRising"
+      ]
+    },
+    "Seed": {
+      "label": "Seed 種子",
+      "requires": [
+        "monthlyHistogramContracting",
+        "monthlyMacdNearZeroOrImproving",
+        "monthlyDpoRising",
+        "monthlyKeyLevel",
+        "notYetBrokenOut"
+      ]
+    },
+    "Watch": {
+      "label": "觀察池",
+      "maximumMissingCoreConditions": 2
+    }
+  },
+  "maturity": {
+    "weeklyTrendSignalMinimum": 0.65,
+    "bottomForming": 30,
+    "monthlyHistogramComplete": 50,
+    "weeklyTrendTurningUp": 70,
+    "trendlineBreakout": 90,
+    "successfulRetest": 100
+  },
+  "research": {
+    "inverseEtfWhiteLine": {
+      "symbol": "00632R",
+      "name": "元大台灣50反1",
+      "formalStrategy": false,
+      "enabled": true,
+      "crossDefinition": "normalizedStockCloseCrossesAboveNormalized00632R",
+      "forwardWindows": [20, 30, 60],
+      "returnTargets": [0.1, 0.15, 0.2],
+      "combineWith": [
+        "macd",
+        "dpo",
+        "shrinkingHistogramSupport",
+        "descendingTrendlineBreakout"
+      ]
+    }
+  },
+  "reports": [
+    { "time": "06:00", "name": "早報", "description": "隔夜資訊與今日候選池" },
+    { "time": "盤中", "name": "突破雷達", "description": "任何時間偵測開盤、盤中與收盤突破" },
+    { "time": "12:00", "name": "盤中匯報", "description": "量價、突破與異常訊號" },
+    { "time": "13:55", "name": "尾盤戰報", "description": "收盤確認與隔日清單" },
+    { "time": "21:30", "name": "籌碼報告", "description": "法人、借券、融券與集中度" }
+  ],
+  "dataAdapter": {
+    "provider": "twse-verified-snapshot",
+    "historicalSource": "Yahoo Finance 5y; latest OHLCV cross-checked with TWSE STOCK_DAY",
+    "realtimeSource": "not-connected",
+    "chipSource": "not-connected"
+  }
+}
