@@ -31,6 +31,23 @@ export interface StructureSignals {
   cleanRetest: number;
 }
 
+export interface ProfitPlan {
+  entryZoneLow: number;
+  entryZoneHigh: number;
+  stopLoss: number;
+  profitZoneLow: number | null;
+  profitZoneHigh: number | null;
+  potentialLowPercent: number;
+  potentialHighPercent: number;
+  lowRiskReward: number;
+  highRiskReward: number;
+  clarityScore: number;
+  isClear: boolean;
+  phase: "forming" | "entry-ready" | "in-progress" | "extended";
+  source: "bearish-engulfing" | "swing-high-clusters" | "none";
+  resistanceTouches: number;
+}
+
 export interface StockCandidate {
   symbol: string;
   name: string;
@@ -43,6 +60,8 @@ export interface StockCandidate {
   keyLevel: number;
   stopLoss: number;
   firstTarget: number;
+  profitPlan?: ProfitPlan;
+  deepScanScore?: number;
   classificationHint?: Classification;
   signals: StrategySignals;
   structureSignals: StructureSignals;

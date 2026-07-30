@@ -8,7 +8,7 @@ import {
   type PriceAdjustment
 } from "../lib/market-data";
 import { fitDescendingTrendline } from "../lib/scanner-engine";
-import type { Candle, Timeframe } from "../lib/types";
+import type { Candle, ProfitPlan, Timeframe } from "../lib/types";
 
 const timeframeLabels: { value: Timeframe; label: string }[] = [
   { value: "day", label: "日 K" },
@@ -19,7 +19,8 @@ const timeframeLabels: { value: Timeframe; label: string }[] = [
 function drawChart(
   canvas: HTMLCanvasElement,
   candles: Candle[],
-  keyLevel: number
+  keyLevel: number,
+  profitPlan?: ProfitPlan
 ) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -40,8 +41,19 @@ function drawChart(
   const dpoTop = macdTop + macdHeight + 18;
   const dpoHeight = height - dpoTop - pad.bottom;
   const chartWidth = width - pad.left - pad.right;
-  const maxPrice = Math.max(...candles.map((item) => item.high)) * 1.015;
-  const minPrice = Math.min(...candles.map((item) => item.low)) * 0.985;
+  const planPrices = profitPlan
+    ? [
+        profitPlan.entryZoneLow,
+        profitPlan.entryZoneHigh,
+        profitPlan.stopLoss,
+        profitPlan.profitZoneLow,
+        profitPlan.profitZoneHigh
+      ].filter((value): value is number => value != null)
+    : [];
+  const maxPrice =
+    Math.max(...candles.map((item) => item.high), ...planPrices) * 1.015;
+  const minPrice =
+    Math.min(...candles.map((item) => item.low), ...planPrices) * 0.985;
   const maxVolume = Math.max(...candles.map((item) => item.volume));
   const xStep = chartWidth / candles.length;
   const candleWidth = Math.max(2, xStep * 0.58);
@@ -70,6 +82,56 @@ function drawChart(
       width - pad.right + 7,
       y + 3
     );
+  }
+
+  if (profitPlan) {
+    const zoneX = pad.left + chartWidth * 0.55;
+    const zoneWidth = width - pad.right - zoneX;
+    const drawZone = (
+      low: number,
+      high: number,
+      fill: string,
+      stroke: string,
+      label: string
+    ) => {
+      const top = toPriceY(high);
+      const bottom = toPriceY(low);
+      ctx.fillStyle = fill;
+      ctx.fillRect(zoneX, top, zoneWidth, Math.max(2, bottom - top));
+      ctx.strokeStyle = stroke;
+      ctx.strokeRect(zoneX, top, zoneWidth, Math.max(2, bottom - top));
+      ctx.fillStyle = stroke;
+      ctx.fillText(label, zoneX + 6, top + 12);
+    };
+    drawZone(
+      profitPlan.entryZoneLow,
+      profitPlan.entryZoneHigh,
+      "rgba(119, 167, 255, .13)",
+      "#77a7ff",
+      `進場 ${profitPlan.entryZoneLow}–${profitPlan.entryZoneHigh}`
+    );
+    if (
+      profitPlan.profitZoneLow != null &&
+      profitPlan.profitZoneHigh != null
+    ) {
+      drawZone(
+        profitPlan.profitZoneLow,
+        profitPlan.profitZoneHigh,
+        "rgba(46, 214, 155, .13)",
+        "#2ed69b",
+        `獲利 ${profitPlan.profitZoneLow}–${profitPlan.profitZoneHigh}`
+      );
+    }
+    const stopY = toPriceY(profitPlan.stopLoss);
+    ctx.setLineDash([3, 4]);
+    ctx.strokeStyle = "#ff5864";
+    ctx.beginPath();
+    ctx.moveTo(zoneX, stopY);
+    ctx.lineTo(width - pad.right, stopY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ff5864";
+    ctx.fillText(`停損 ${profitPlan.stopLoss}`, zoneX + 6, stopY - 5);
   }
 
   candles.forEach((candle, index) => {
@@ -303,10 +365,12 @@ function drawChart(
 
 export function CandleChart({
   symbol,
-  keyLevel
+  keyLevel,
+  profitPlan
 }: {
   symbol: string;
   keyLevel: number;
+  profitPlan?: ProfitPlan;
 }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
   const [adjustment, setAdjustment] =
@@ -322,12 +386,12 @@ export function CandleChart({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !candles.length) return;
-    const redraw = () => drawChart(canvas, candles, keyLevel);
+    const redraw = () => drawChart(canvas, candles, keyLevel, profitPlan);
     redraw();
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [candles, keyLevel, timeframe]);
+  }, [candles, keyLevel, profitPlan, timeframe]);
 
   return (
     <section className="panel chart-shell">
@@ -377,6 +441,7 @@ export function CandleChart({
           <span><i className="legend-dot" style={{ background: "var(--down)" }} />跌</span>
           <span><i className="legend-dot" style={{ background: "var(--amber)" }} />關鍵價</span>
           <span><i className="legend-dot" style={{ background: "var(--blue)" }} />趨勢線</span>
+          <span><i className="legend-dot" style={{ background: "var(--down)" }} />獲利區</span>
         </div>
       </div>
       {dataNote ? (

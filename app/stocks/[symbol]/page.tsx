@@ -28,6 +28,13 @@ export default async function StockPage({
   const { symbol } = await params;
   const stock = getScannedStock(symbol);
   if (!stock) notFound();
+  const plan = stock.profitPlan;
+  const phaseLabels = {
+    forming: "結構形成中",
+    "entry-ready": "接近進場區",
+    "in-progress": "已離開進場區",
+    extended: "已進入／越過獲利區"
+  };
 
   return (
     <RadarShell activePath="/">
@@ -74,8 +81,84 @@ export default async function StockPage({
         </div>
       </section>
 
+      {plan ? (
+        <section
+          className={`panel profit-plan-panel ${
+            plan.isClear ? "profit-plan-clear" : ""
+          }`}
+        >
+          <div className="section-head">
+            <div>
+              <span className="profit-zone-badge">
+                {plan.isClear ? "深層獲利區成立" : "深層結構追蹤"}
+              </span>
+              <h2>進場、防守與獲利範圍</h2>
+              <p>
+                {phaseLabels[plan.phase]} · 深層掃描 {plan.clarityScore} 分
+              </p>
+            </div>
+            <strong className="profit-plan-score">{plan.clarityScore}</strong>
+          </div>
+          <div className="profit-range-visual" aria-label="交易區間圖">
+            <div className="profit-range-stop">
+              <span>停損</span>
+              <strong>{formatPrice(plan.stopLoss)}</strong>
+            </div>
+            <div className="profit-range-entry">
+              <span>偏好進場區</span>
+              <strong>
+                {formatPrice(plan.entryZoneLow)}–
+                {formatPrice(plan.entryZoneHigh)}
+              </strong>
+            </div>
+            <div className="profit-range-arrow">→</div>
+            <div className="profit-range-target">
+              <span>預期獲利區</span>
+              <strong>
+                {plan.profitZoneLow != null && plan.profitZoneHigh != null
+                  ? `${formatPrice(plan.profitZoneLow)}–${formatPrice(plan.profitZoneHigh)}`
+                  : "等待壓力區成形"}
+              </strong>
+            </div>
+          </div>
+          <div className="profit-plan-metrics">
+            <div>
+              <span>保守潛力</span>
+              <strong>{plan.potentialLowPercent.toFixed(1)}%</strong>
+            </div>
+            <div>
+              <span>區間上緣潛力</span>
+              <strong>{plan.potentialHighPercent.toFixed(1)}%</strong>
+            </div>
+            <div>
+              <span>區間 R/R</span>
+              <strong>
+                {plan.lowRiskReward.toFixed(1)}–
+                {plan.highRiskReward.toFixed(1)}
+              </strong>
+            </div>
+            <div>
+              <span>壓力依據</span>
+              <strong>
+                {plan.source === "bearish-engulfing"
+                  ? "高檔吞噬 K"
+                  : plan.source === "swing-high-clusters"
+                    ? "雙層前高"
+                    : "尚未形成"}
+              </strong>
+            </div>
+          </div>
+          {!plan.isClear ? (
+            <div className="notice">
+              目前保留觀察，但未同時滿足「靠近進場區、獲利帶在上方、區間風險報酬充足」；不列入深層獲利區清單。
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <CandleChart
         keyLevel={stock.keyLevel}
+        profitPlan={plan}
         symbol={stock.symbol}
       />
 

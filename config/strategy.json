@@ -96,6 +96,17 @@
       "enabled": true,
       "appliesTo": "firstPostBreakoutConsolidation",
       "bufferPercent": 0
+    },
+    "deepProfitZone": {
+      "enabled": true,
+      "resistanceLookbackBars": 180,
+      "entryZoneBufferPercent": 4,
+      "maximumEntryExtensionPercent": 3,
+      "minimumZoneWidthPercent": 3,
+      "minimumProfitToZonePercent": 5,
+      "maximumProfitZoneDistancePercent": 45,
+      "minimumLowRiskReward": 1.5,
+      "minimumHighRiskReward": 2
     }
   },
   "classificationRules": {

@@ -21,7 +21,8 @@ export function roundToTick(value) {
           : value < 500
             ? 0.5
             : 1;
-  return Math.round(value / tick) * tick;
+  const decimals = tick >= 1 ? 0 : tick >= 0.1 ? 1 : 2;
+  return Number((Math.round(value / tick) * tick).toFixed(decimals));
 }
 
 export function ema(values, period) {
@@ -329,6 +330,199 @@ function keyStructure(daily, weekly, monthly, config) {
   };
 }
 
+function clusteredSwingResistance(candles) {
+  const points = findSwingHighIndexes(candles)
+    .map((index) => ({
+      index,
+      price: candles[index].high,
+      bodyTop: Math.max(candles[index].open, candles[index].close)
+    }))
+    .sort((left, right) => left.price - right.price);
+  const clusters = [];
+  for (const point of points) {
+    const cluster = clusters.find(
+      (candidate) =>
+        Math.abs(point.price - candidate.average) / candidate.average <= 0.025
+    );
+    if (cluster) {
+      cluster.points.push(point);
+      cluster.average =
+        cluster.points.reduce((total, item) => total + item.price, 0) /
+        cluster.points.length;
+      cluster.low = Math.min(cluster.low, point.bodyTop);
+      cluster.high = Math.max(cluster.high, point.price);
+    } else {
+      clusters.push({
+        points: [point],
+        average: point.price,
+        low: point.bodyTop,
+        high: point.price
+      });
+    }
+  }
+  return clusters;
+}
+
+function bearishEngulfingSupplyZones(candles) {
+  const zones = [];
+  for (let index = 1; index < candles.length - 2; index += 1) {
+    const previous = candles[index - 1];
+    const candle = candles[index];
+    const previousBullish = previous.close > previous.open;
+    const candleBearish = candle.close < candle.open;
+    const bodyEngulfed =
+      candle.open >= previous.close * 0.995 &&
+      candle.close <= previous.open * 1.005;
+    const fullRangeCovered =
+      candle.high >= previous.high * 0.995 &&
+      candle.low <= previous.low * 1.005;
+    if (
+      !previousBullish ||
+      !candleBearish ||
+      (!bodyEngulfed && !fullRangeCovered)
+    ) {
+      continue;
+    }
+    const low = Math.min(previous.low, candle.low);
+    const high = Math.max(previous.high, candle.high);
+    const widthPercent = ((high - low) / Math.max(0.01, low)) * 100;
+    if (widthPercent < 2.5 || widthPercent > 25) continue;
+    zones.push({
+      low,
+      high,
+      index,
+      touches: candles.filter(
+        (item) => item.high >= low * 0.99 && item.low <= high * 1.01
+      ).length,
+      source: "bearish-engulfing"
+    });
+  }
+  return zones;
+}
+
+export function detectProfitPlan(daily, support, trendline, config) {
+  const settings = config.patterns.deepProfitZone;
+  const chart = daily.slice(-settings.resistanceLookbackBars);
+  const currentPrice = chart.at(-1).close;
+  const entryZoneLow = roundToTick(support.keyLevel);
+  const entryZoneHigh = roundToTick(
+    support.keyLevel * (1 + settings.entryZoneBufferPercent / 100)
+  );
+  const stopLoss = roundToTick(
+    Math.min(support.stopLoss, support.keyLevel)
+  );
+  const minimumOverhead =
+    currentPrice * (1 + settings.minimumProfitToZonePercent / 100);
+  const maximumOverhead =
+    currentPrice * (1 + settings.maximumProfitZoneDistancePercent / 100);
+
+  const engulfingZone = bearishEngulfingSupplyZones(chart)
+    .filter(
+      (zone) =>
+        zone.low >= minimumOverhead &&
+        zone.low <= maximumOverhead &&
+        ((zone.high - zone.low) / zone.low) * 100 >=
+          settings.minimumZoneWidthPercent
+    )
+    .sort((left, right) => left.low - right.low)[0];
+
+  let selectedZone = engulfingZone ?? null;
+  if (!selectedZone) {
+    const overhead = clusteredSwingResistance(chart)
+      .filter(
+        (cluster) =>
+          cluster.average >= minimumOverhead &&
+          cluster.average <= maximumOverhead
+      )
+      .sort((left, right) => left.average - right.average);
+    const first = overhead[0];
+    const second = overhead.find(
+      (cluster) =>
+        first &&
+        ((cluster.average - first.average) / first.average) * 100 >=
+          settings.minimumZoneWidthPercent
+    );
+    if (first && second) {
+      selectedZone = {
+        low: first.average,
+        high: second.high,
+        touches: first.points.length + second.points.length,
+        source: "swing-high-clusters"
+      };
+    }
+  }
+
+  const profitZoneLow = selectedZone
+    ? roundToTick(selectedZone.low)
+    : null;
+  const profitZoneHigh = selectedZone
+    ? roundToTick(Math.max(selectedZone.low, selectedZone.high))
+    : null;
+  const entryRisk = Math.max(0.01, entryZoneHigh - stopLoss);
+  const lowRiskReward =
+    profitZoneLow == null
+      ? 0
+      : Math.max(0, profitZoneLow - entryZoneHigh) / entryRisk;
+  const highRiskReward =
+    profitZoneHigh == null
+      ? 0
+      : Math.max(0, profitZoneHigh - entryZoneHigh) / entryRisk;
+  const potentialLowPercent =
+    profitZoneLow == null
+      ? 0
+      : ((profitZoneLow - entryZoneHigh) / entryZoneHigh) * 100;
+  const potentialHighPercent =
+    profitZoneHigh == null
+      ? 0
+      : ((profitZoneHigh - entryZoneHigh) / entryZoneHigh) * 100;
+  const entryExtensionPercent =
+    ((currentPrice - entryZoneHigh) / entryZoneHigh) * 100;
+  const phase =
+    currentPrice < entryZoneLow * 0.98
+      ? "forming"
+      : entryExtensionPercent <= settings.maximumEntryExtensionPercent
+        ? "entry-ready"
+        : profitZoneLow != null && currentPrice < profitZoneLow
+          ? "in-progress"
+          : "extended";
+
+  let clarityScore = 0;
+  if (selectedZone) clarityScore += 25;
+  if (selectedZone?.source === "bearish-engulfing") clarityScore += 10;
+  clarityScore += Math.min(15, Number(selectedZone?.touches ?? 0) * 3);
+  if (trendline.confirmedBreakout) clarityScore += 15;
+  if (trendline.successfulRetest) clarityScore += 10;
+  if (support.tests >= 3) clarityScore += 10;
+  if (lowRiskReward >= settings.minimumLowRiskReward) clarityScore += 8;
+  if (highRiskReward >= settings.minimumHighRiskReward) clarityScore += 7;
+  if (phase === "entry-ready") clarityScore += 10;
+  clarityScore = Math.min(100, clarityScore);
+
+  const isClear =
+    Boolean(selectedZone) &&
+    phase === "entry-ready" &&
+    (trendline.confirmedBreakout || trendline.above) &&
+    lowRiskReward >= settings.minimumLowRiskReward &&
+    highRiskReward >= settings.minimumHighRiskReward;
+
+  return {
+    entryZoneLow,
+    entryZoneHigh,
+    stopLoss,
+    profitZoneLow,
+    profitZoneHigh,
+    potentialLowPercent,
+    potentialHighPercent,
+    lowRiskReward,
+    highRiskReward,
+    clarityScore,
+    isClear,
+    phase,
+    source: selectedZone?.source ?? "none",
+    resistanceTouches: Number(selectedZone?.touches ?? 0)
+  };
+}
+
 function trendlineState(daily, config) {
   const chart = daily.slice(-120);
   const minimumTouches =
@@ -486,6 +680,12 @@ export function analyzeStock(stock, config, meta) {
   const dailyPrevious = daily.at(-2);
   const support = keyStructure(daily, weekly, monthly, config);
   const trendline = trendlineState(daily, config);
+  const profitPlan = detectProfitPlan(
+    daily,
+    support,
+    trendline,
+    config
+  );
   const monthlyTrend = trendScore(monthly);
   const weeklyTrend = trendScore(weekly);
   const dailyTrend = trendScore(daily);
@@ -559,8 +759,11 @@ export function analyzeStock(stock, config, meta) {
     `${stock.exchange} ${meta.dataAsOf} 收盤 ${currentRaw[4]}；20 日均量約 ${Math.round(averageVolumeLots).toLocaleString("zh-TW")} 張。`,
     `月／週／日趨勢分別為 ${Math.round(monthlyTrend * 100)}／${Math.round(weeklyTrend * 100)}／${Math.round(dailyTrend * 100)}。`,
     `MACD ${dailyLatest.macd.toFixed(2)}、訊號 ${dailyLatest.signal.toFixed(2)}；DPO ${dailyLatest.dpo.toFixed(2)}。`,
-    `自動辨識關鍵價位 ${support.keyLevel}，近 120 根 K 棒測試約 ${support.tests} 次。`
-  ];
+    `自動辨識關鍵價位 ${support.keyLevel}，近 120 根 K 棒測試約 ${support.tests} 次。`,
+    profitPlan.profitZoneLow != null && profitPlan.profitZoneHigh != null
+      ? `深層掃描辨識進場區 ${profitPlan.entryZoneLow}–${profitPlan.entryZoneHigh}，上方獲利區 ${profitPlan.profitZoneLow}–${profitPlan.profitZoneHigh}。`
+      : null
+  ].filter(Boolean);
   const missingConditions = [
     !trendline.confirmedBreakout
       ? "近 20 個交易日尚未出現收盤確認的下降趨勢線突破。"
@@ -570,6 +773,9 @@ export function analyzeStock(stock, config, meta) {
       : null,
     !support.shrinkingSupport
       ? "尚未辨識到符合設定週期的縮柱支撐。"
+      : null,
+    !profitPlan.isClear
+      ? "尚未同時滿足靠近進場區、上方壓力區清楚且風險報酬充足的深層區間條件。"
       : null,
     "法人、借券與集中度資料仍未形成連續序列，籌碼分暫不自動加分。"
   ].filter(Boolean);
@@ -589,6 +795,8 @@ export function analyzeStock(stock, config, meta) {
     keyLevel: support.keyLevel,
     stopLoss: support.stopLoss,
     firstTarget,
+    profitPlan,
+    deepScanScore: profitPlan.clarityScore,
     signals: {
       monthlyTrend,
       weeklyTrend,
@@ -664,10 +872,12 @@ export function analyzeStock(stock, config, meta) {
 }
 
 export function sortCandidates(candidates) {
+  const rankingValue = (candidate) =>
+    candidate.score +
+    candidate.structureScore * 0.25 +
+    (candidate.deepScanScore ?? 0) * 0.08 +
+    (candidate.profitPlan?.isClear ? 12 : 0);
   return [...candidates].sort(
-    (left, right) =>
-      right.score +
-      right.structureScore * 0.25 -
-      (left.score + left.structureScore * 0.25)
+    (left, right) => rankingValue(right) - rankingValue(left)
   );
 }

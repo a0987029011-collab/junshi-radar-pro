@@ -12,8 +12,11 @@ import {
 } from "./StockUI";
 import { ReviewControls } from "./ReviewControls";
 
-const filters: { value: "All" | Classification; label: string }[] = [
+type RadarFilter = "All" | "Deep" | Classification;
+
+const filters: { value: RadarFilter; label: string }[] = [
   { value: "All", label: "全部" },
+  { value: "Deep", label: "深層獲利區" },
   { value: "S", label: "S 級" },
   { value: "A", label: "A 級" },
   { value: "A+", label: "A+" },
@@ -22,18 +25,27 @@ const filters: { value: "All" | Classification; label: string }[] = [
 ];
 
 export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
-  const [filter, setFilter] = useState<"All" | Classification>("All");
+  const [filter, setFilter] = useState<RadarFilter>("All");
   const visible = useMemo(
-    () =>
-      filter === "All"
-        ? stocks
-        : stocks.filter((stock) => stock.classification === filter),
+    () => {
+      if (filter === "All") return stocks;
+      if (filter === "Deep") {
+        return stocks
+          .filter((stock) => stock.profitPlan?.isClear)
+          .sort(
+            (left, right) =>
+              (right.deepScanScore ?? 0) - (left.deepScanScore ?? 0)
+          );
+      }
+      return stocks.filter((stock) => stock.classification === filter);
+    },
     [filter, stocks]
   );
-  const counts = filters.slice(1).map((item) => ({
+  const counts = filters.slice(2).map((item) => ({
     ...item,
     count: stocks.filter((stock) => stock.classification === item.value).length
   }));
+  const deepCount = stocks.filter((stock) => stock.profitPlan?.isClear).length;
   const wanHai = stocks.find((stock) => stock.symbol === "2615")!;
   const dataAsOf = stocks[0]?.dataAsOf ?? "—";
   const position = estimatePosition(
@@ -70,6 +82,15 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
           <Link className="text-link" href="/strategy">調整策略 →</Link>
         </div>
         <div className="count-grid">
+          <button
+            className="count-card profit-zone-card"
+            onClick={() => setFilter("Deep")}
+            type="button"
+          >
+            <span className="profit-zone-badge">深層獲利區</span>
+            <strong>{deepCount}</strong>
+            <span>進場與獲利帶清楚</span>
+          </button>
           {counts.map((item) => (
             <button
               className="count-card"
@@ -119,7 +140,7 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                   <tr>
                     <th>#</th><th>股票</th><th>分類</th><th>總分</th>
                     <th>成熟度</th><th>現價</th><th>關鍵價</th>
-                    <th>停損</th><th>2R 推估</th><th>R/R</th>
+                    <th>停損</th><th>獲利區</th><th>區間 R/R</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -155,8 +176,17 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                       </td>
                       <td>{formatPrice(stock.keyLevel)}</td>
                       <td>{formatPrice(stock.stopLoss)}</td>
-                      <td>{formatPrice(stock.firstTarget)}</td>
-                      <td>{stock.riskReward.toFixed(1)}</td>
+                      <td>
+                        {stock.profitPlan?.profitZoneLow != null &&
+                        stock.profitPlan.profitZoneHigh != null
+                          ? `${formatPrice(stock.profitPlan.profitZoneLow)}–${formatPrice(stock.profitPlan.profitZoneHigh)}`
+                          : formatPrice(stock.firstTarget)}
+                      </td>
+                      <td>
+                        {stock.profitPlan?.profitZoneLow != null
+                          ? `${stock.profitPlan.lowRiskReward.toFixed(1)}–${stock.profitPlan.highRiskReward.toFixed(1)}`
+                          : stock.riskReward.toFixed(1)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -172,6 +202,14 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                         <ClassificationBadge
                           classification={stock.classification}
                         />
+                        {stock.profitPlan?.isClear ? (
+                          <span
+                            className="profit-zone-badge"
+                            style={{ marginLeft: 6 }}
+                          >
+                            深層區間
+                          </span>
+                        ) : null}
                         <div className="stock-name" style={{ marginTop: 9 }}>
                           {stock.name}{" "}
                           <span className="stock-symbol">{stock.symbol}</span>
@@ -190,9 +228,9 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                     <MaturityBar value={stock.maturity} />
                     <div className="stock-card-metrics">
                       <div className="tiny-metric"><span>總分</span><strong>{stock.score}</strong></div>
-                      <div className="tiny-metric"><span>關鍵價</span><strong>{formatPrice(stock.keyLevel)}</strong></div>
-                      <div className="tiny-metric"><span>停損</span><strong>{formatPrice(stock.stopLoss)}</strong></div>
-                      <div className="tiny-metric"><span>R/R</span><strong>{stock.riskReward.toFixed(1)}</strong></div>
+                      <div className="tiny-metric"><span>進場區</span><strong>{stock.profitPlan ? `${formatPrice(stock.profitPlan.entryZoneLow)}–${formatPrice(stock.profitPlan.entryZoneHigh)}` : formatPrice(stock.keyLevel)}</strong></div>
+                      <div className="tiny-metric"><span>獲利區</span><strong>{stock.profitPlan?.profitZoneLow != null && stock.profitPlan.profitZoneHigh != null ? `${formatPrice(stock.profitPlan.profitZoneLow)}–${formatPrice(stock.profitPlan.profitZoneHigh)}` : formatPrice(stock.firstTarget)}</strong></div>
+                      <div className="tiny-metric"><span>深掃</span><strong>{stock.deepScanScore ?? 0}</strong></div>
                     </div>
                     <ReviewControls symbol={stock.symbol} />
                   </article>

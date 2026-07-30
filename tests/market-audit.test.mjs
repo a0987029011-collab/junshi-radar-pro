@@ -28,8 +28,34 @@ test("radar snapshot has one consistent market date and universe audit", () => {
     assert.ok(classifications.has(candidate.classification));
     assert.ok(candidate.score >= 0 && candidate.score <= 100);
     assert.ok(candidate.structureScore >= 0 && candidate.structureScore <= 20);
+    assert.ok(candidate.profitPlan);
+    assert.ok(candidate.deepScanScore >= 0 && candidate.deepScanScore <= 100);
+    assert.ok(
+      candidate.profitPlan.entryZoneLow <= candidate.profitPlan.entryZoneHigh
+    );
+    assert.ok(
+      candidate.profitPlan.stopLoss <= candidate.profitPlan.entryZoneHigh
+    );
     assert.equal(candidate.signals.chipStructure, 0);
     assert.equal(candidate.signals.chipStructureStable, false);
+  }
+});
+
+test("deep profit-zone candidates expose an auditable range", () => {
+  const deepCandidates = verifiedCandidates.filter(
+    (candidate) => candidate.profitPlan?.isClear
+  );
+  assert.ok(deepCandidates.length > 0);
+
+  for (const candidate of deepCandidates) {
+    const plan = candidate.profitPlan;
+    assert.equal(plan.phase, "entry-ready");
+    assert.ok(plan.profitZoneLow > plan.entryZoneHigh);
+    assert.ok(plan.profitZoneHigh > plan.profitZoneLow);
+    assert.ok(plan.lowRiskReward >= 1.5);
+    assert.ok(plan.highRiskReward >= 2);
+    assert.ok(plan.potentialLowPercent >= 5);
+    assert.ok(["bearish-engulfing", "swing-high-clusters"].includes(plan.source));
   }
 });
 

@@ -10,7 +10,10 @@ import {
   parseTwseMiIndexQuotes,
   parseTwseOpenApiQuotes
 } from "../scripts/fetch-market-snapshot.mjs";
-import { classifyCandidate } from "../scripts/lib/strategy-engine.mjs";
+import {
+  classifyCandidate,
+  detectProfitPlan
+} from "../scripts/lib/strategy-engine.mjs";
 
 const strategy = JSON.parse(
   await readFile(new URL("../config/strategy.json", import.meta.url), "utf8")
@@ -165,6 +168,59 @@ test("official quote replaces the latest delayed historical row", () => {
     6941425,
     0.9
   ]);
+});
+
+test("deep scan converts a structural low and engulfing ceiling into a profit zone", () => {
+  const candles = Array.from({ length: 24 }, (_, index) => ({
+    time: `2026-01-${String(index + 1).padStart(2, "0")}`,
+    open: 14.2,
+    high: 14.5,
+    low: 13.9,
+    close: 14.1,
+    volume: 1000000,
+    macd: 0,
+    signal: 0,
+    histogram: 0,
+    dpo: 0
+  }));
+  candles[2] = {
+    ...candles[2],
+    open: 15.2,
+    high: 17.35,
+    low: 15.1,
+    close: 17
+  };
+  candles[3] = {
+    ...candles[3],
+    open: 17.25,
+    high: 17.4,
+    low: 15.05,
+    close: 15.15
+  };
+  candles.at(-1).open = 13.5;
+  candles.at(-1).high = 13.8;
+  candles.at(-1).low = 13.2;
+  candles.at(-1).close = 13.7;
+
+  const plan = detectProfitPlan(
+    candles,
+    { keyLevel: 13.1, stopLoss: 13.1, tests: 4 },
+    {
+      above: true,
+      confirmedBreakout: true,
+      successfulRetest: true
+    },
+    strategy
+  );
+
+  assert.equal(plan.entryZoneLow, 13.1);
+  assert.equal(plan.entryZoneHigh, 13.6);
+  assert.equal(plan.profitZoneLow, 15.05);
+  assert.equal(plan.profitZoneHigh, 17.4);
+  assert.equal(plan.source, "bearish-engulfing");
+  assert.equal(plan.phase, "entry-ready");
+  assert.equal(plan.isClear, true);
+  assert.ok(plan.lowRiskReward >= 2);
 });
 
 function candidateWithSignals(overrides = {}) {
