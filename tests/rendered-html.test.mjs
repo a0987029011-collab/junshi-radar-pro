@@ -67,9 +67,8 @@ test("server-renders the radar dashboard", async () => {
   assert.match(html, /軍師雷達/);
   assert.match(html, /只打最漂亮的第一槍/);
   assert.match(html, /萬海/);
-  assert.match(html, /201\.5/);
-  assert.match(html, /TWSE 盤後/);
-  assert.match(html, /50\.10/);
+  assert.match(html, /上市櫃盤後/);
+  assert.match(html, /全市場候選排行榜/);
   assert.doesNotMatch(html, /MOCK DATA/);
   assert.doesNotMatch(html, /codex-preview/);
 });

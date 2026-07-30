@@ -35,6 +35,7 @@ export interface StockCandidate {
   symbol: string;
   name: string;
   sector: string;
+  exchange?: "TWSE" | "TPEx";
   paidInCapitalBillion: number;
   averageVolumeLots: number;
   currentPrice: number;

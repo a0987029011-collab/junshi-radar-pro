@@ -19,7 +19,7 @@ export interface MarketDataAdapter {
 }
 
 export class VerifiedSnapshotMarketDataAdapter implements MarketDataAdapter {
-  readonly name = "twse-verified-delayed-snapshot";
+  readonly name = "twse-tpex-automatic-market-snapshot";
   async listCandidates() { return verifiedCandidates; }
   async getCandidate(symbol: string) {
     return verifiedCandidates.find((candidate) => candidate.symbol === symbol);

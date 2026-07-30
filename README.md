@@ -1,49 +1,47 @@
-# 軍師雷達 Pro（第一版）
+# 軍師雷達 Pro
 
-軍師雷達是台股多週期掃描與人工審核 Web App。現有 7 檔候選已使用五年歷史資料重算，最新開高低收量會逐檔與 TWSE `STOCK_DAY` 核對後才能建置。行情是盤後快照，**不會自動下單，也不構成投資建議**。
+軍師雷達 Pro 是台股多週期掃描與人工審核 Web App。Version 2 保留原本介面，將固定 7 檔資料改為可每天自動更新的上市、上櫃全市場掃描流程。
 
-## 第一版已完成
+> 本系統僅供研究與人工審核，不構成投資建議，也不會自動下單。
 
-- 手機優先首頁：S、A、A+、Seed、觀察池數量與排行榜
-- 100 分策略評分 + 20 分結構品質
-- 個股日／週／月 K 切換、成交量、MACD、DPO、趨勢線與關鍵價位
-- 「為何入選」及「還缺哪些條件」
-- 人工審核：通過／觀察／排除
-- Watchlist
-- 萬海持股案例：352 股、均價 85.3、停損 82
-- 3 折手續費、最低手續費與證交稅風控試算
-- 策略權重調整
-- 00632R 白線事件研究報告格式與可執行回測核心
-- 模組化資料來源、掃描、評分、回測與風控介面
-- `/api/radar` 已核對候選掃描結果 API
+## Version 2 已完成
 
-人工審核、Watchlist、持股與權重先儲存在目前裝置的瀏覽器中。
+- 掃描 TWSE 上市與 TPEx 上櫃公司。
+- 先套用股本 20 億元及 20 日均量 1,000 張門檻。
+- 以還原日 K 聚合週 K、月 K，計算 MACD、DPO、下降趨勢線、縮柱支撐、關鍵價位與回測。
+- 依 `S / A+ / A / Seed / Watch` 自動分類。
+- 最新開高低收量以證交所、櫃買中心官方盤後行情校正。
+- 可選擇富果授權還原歷史行情；沒有金鑰時使用延遲歷史來源。
+- GitHub Actions 於台北時間每個交易日 21:45 更新快照；資料提交後 Vercel 會自動部署。
+- 保留既有手機版與桌面版 UI。
 
-## 系統架構
+## 資料流程
 
 ```text
-市場資料 Adapter
-  ├─ TWSE 上市公司基本資料與盤後最新 OHLCV
-  ├─ 五年原始歷史（最新資料需通過 TWSE 交叉核對）
-  ├─ TWSE 除權除息參考價建立還原 K 因子
-  └─ 授權即時行情 WebSocket（下一階段）
-          ↓
-掃描引擎 → 指標／趨勢線／縮柱支撐／關鍵價位
-          ↓
-評分引擎 → 100 分 + 結構 20 分 → S / A / A+ / Seed / 觀察
-          ↓
-Next.js Web App → 排行榜／個股圖／人工審核／持股風控
-          ↓
-回測引擎 → 00632R Research 因子與組合條件統計
+TWSE / TPEx 官方公司與收盤資料
+                    │
+Fugle（有金鑰）或延遲歷史行情
+                    │
+股本、20 日均量門檻
+                    │
+日／週／月指標與型態計算
+                    │
+100 分策略分 + 20 分結構品質
+                    │
+S / A+ / A / Seed / Watch
+                    │
+data/radar-snapshot.json
+                    │
+Next.js UI → GitHub → Vercel
 ```
 
-完整說明見 [系統架構](docs/ARCHITECTURE.md) 與 [真實資料接入方案](docs/REAL_DATA_PLAN.md)。
+所有策略門檻與權重集中在 [`config/strategy.json`](config/strategy.json)，不寫死在畫面中。
 
 ## 本機執行
 
 需求：
 
-- Node.js 22.13 以上
+- Node.js 22 以上
 - pnpm 10
 
 ```bash
@@ -51,83 +49,65 @@ pnpm install
 pnpm dev
 ```
 
-瀏覽器開啟 `http://localhost:3000`。
+開啟 `http://localhost:3000`。
 
-### 用手機測試
-
-電腦與手機連到同一個 Wi-Fi，執行：
+### 產生全市場資料
 
 ```bash
-pnpm dev -- --host 0.0.0.0
+pnpm data:refresh
 ```
 
-再於手機開啟 `http://電腦區網IP:3000`。Windows 防火牆若詢問，僅允許私人網路。
-
-## 驗證
+如果本機無法連外，可用既有已核對資料產生開發快照：
 
 ```bash
+pnpm data:seed
+```
+
+### 測試
+
+```bash
+pnpm lint
 pnpm test
 ```
 
-測試會先產生 Next.js production build，再啟動本機 production server，檢查首頁、持股頁、萬海風控數字與白線回測核心。
+## 富果行情 API
 
-## 策略設定
+在 GitHub repository 的 `Settings → Secrets and variables → Actions` 新增：
 
-正式預設規則全部集中在 [`config/strategy.json`](config/strategy.json)：
-
-- 資金、單檔投入、最大停損、手續費與證交稅
-- 股本、日均量與市場範圍
-- MACD、DPO 與量能門檻
-- 趨勢線、縮柱支撐、關鍵價位與前一根低點停損
-- S / A / A+ / Seed / 觀察分類
-- 100 分權重、20 分結構品質與成熟度
-- 00632R Research 因子
-- 06:00、盤中、12:00、13:55、21:30 報告節奏
-
-程式只負責解讀設定，策略數值不散落在畫面中。網頁「策略」頁目前可調整權重並儲存在本機；未來接資料庫後可改為多人共用設定。
-
-## 資料來源替換
-
-`lib/data-adapter.ts` 定義統一介面。正式資料快照由 `lib/market-data.ts` 使用，新的供應商只需實作：
-
-- `listCandidates`
-- `getCandidate`
-- `getCandles`
-- `runInverseEtfResearch`
-
-之後把 `marketDataAdapter` 換成新實作即可；排行榜、圖表、評分與回測畫面不用重寫。
-
-環境變數範例見 `.env.example`。金鑰只能放環境變數，不要寫入設定檔或版本控制。
-
-## 部署
-
-### Vercel（建議）
-
-本專案可直接從 GitHub 匯入 Vercel。Framework Preset 選擇 `Next.js`，其餘設定沿用專案預設即可：
-
-- Install Command：由 `pnpm-lock.yaml` 與 `packageManager` 自動偵測
-- Build Command：`pnpm build`
-- Output Directory：由 Next.js 自動管理，不需覆寫
-- Node.js：22.x 以上
-
-目前盤後快照與策略資料已包含在 repository，第一版部署不需要額外環境變數。
-
-### OpenAI Sites
-
-本專案仍保留 Sites 相容結構；使用 `pnpm build:sites` 可輸出 Cloudflare Worker 版本。
-
-### 自行部署 Cloudflare
-
-```bash
-pnpm build:sites
+```text
+FUGLE_API_KEY=你的金鑰
 ```
 
-確認 `dist/server/index.js` 存在後，以 Cloudflare Workers 流程部署。正式即時資料 API 金鑰需放在託管平台的環境變數，不要上傳 `.env`。
+排程會自動優先使用富果授權還原歷史行情；沒有設定金鑰時，仍可用官方盤後資料加延遲歷史行情更新。
 
-## 開發階段
+Vercel 不需要保存這個金鑰，因為每日掃描由 GitHub Actions 執行，Vercel 只部署產生完成的雷達快照。
 
-1. **第一版（已完成）**：排行、個股、策略評分、持股風控、人工審核。
-2. **盤後核對資料（現況）**：7 檔候選的 TWSE 基本資料與最新 OHLCV 已核對；籌碼未接入、研究勝率不顯示假數字。
-3. **歷史資料與回測**：十年調整後 OHLCV、下市股票、交易成本、00632R 事件研究。
-4. **盤中雷達**：授權 WebSocket、突破事件佇列、12:00 與 13:55 報告。
-5. **正式產品化**：登入、雲端 watchlist／審核紀錄、通知、監控與資料品質警報。
+## 每日自動更新
+
+工作流程位於 [`.github/workflows/update-radar.yml`](.github/workflows/update-radar.yml)：
+
+- 可在 GitHub `Actions → Update Junshi Radar → Run workflow` 手動執行。
+- 每週一至週五台北時間 21:45 自動執行。
+- 更新完成後提交 `data/radar-snapshot.json` 至 `main`。
+- Vercel 偵測到新提交後自動發布。
+
+## 環境變數
+
+參考 [`.env.example`](.env.example)：
+
+```text
+MARKET_DATA_PROVIDER=auto
+FUGLE_API_KEY=
+DATA_TIMEZONE=Asia/Taipei
+HISTORY_YEARS=5
+SCAN_CONCURRENCY=6
+```
+
+`MARKET_DATA_PROVIDER=fugle` 會要求富果成功，`auto` 則會在沒有金鑰或富果暫時失敗時改用延遲歷史來源。
+
+## 目前限制
+
+- 未設定富果金鑰時不是盤中即時行情。
+- GitHub Actions 目前負責盤後全市場掃描；盤中 WebSocket 需要常駐 Worker，不能由 Vercel 靜態部署長時間維持連線。
+- 籌碼連續資料尚未接入，因此 S 級不會只憑價格訊號成立。
+- 00632R 白線仍是 Research 因子，不會直接升級正式分類。

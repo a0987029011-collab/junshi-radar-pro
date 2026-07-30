@@ -381,10 +381,12 @@ export function CandleChart({
       </div>
       {dataNote ? (
         <div className="chart-source">
-          {symbol}｜最新 OHLCV 已由 TWSE 核對（{dataNote.dataAsOf}）・
+          {symbol}｜最新 OHLCV 已由
+          {dataNote.latestVerification?.source ?? "官方市場"}核對（
+          {dataNote.dataAsOf}）・
           五年歷史 {dataNote.historyDays} 日・
           {adjustment === "adjusted"
-            ? `還原 K：依 TWSE 除權息參考價，事件 ${dataNote.corporateActions} 筆`
+            ? "還原 K：使用歷史資料供應商的還原因子"
             : "原始 K：未還原除權息"}
         </div>
       ) : null}

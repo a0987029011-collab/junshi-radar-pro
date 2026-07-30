@@ -38,7 +38,8 @@ export default async function StockPage({
               <ClassificationBadge classification={stock.classification} />
               <h1>{stock.name}</h1>
               <p>
-                {stock.symbol} · {stock.sector} · TWSE 收盤 {stock.dataAsOf}
+                {stock.symbol} · {stock.sector} · {stock.exchange ?? "TWSE"} 收盤{" "}
+                {stock.dataAsOf}
               </p>
             </div>
             <div>

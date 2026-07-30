@@ -5,7 +5,10 @@ import { scanMarket } from "../../../lib/scoring-engine";
 
 export async function GET() {
   return NextResponse.json({
-    dataMode: strategy.meta.mode,
+    dataMode: marketSnapshotMeta.mode,
+    market: marketSnapshotMeta.market,
+    provider: marketSnapshotMeta.provider,
+    universeStats: marketSnapshotMeta.universeStats,
     dataAsOf: marketSnapshotMeta.dataAsOf,
     snapshotGeneratedAt: marketSnapshotMeta.generatedAt,
     strategyVersion: strategy.meta.version,

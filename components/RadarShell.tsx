@@ -40,7 +40,7 @@ export function RadarShell({
         </nav>
         <div className="market-state">
           <span className="state-dot" />
-          <span>TWSE 盤後 · {marketSnapshotMeta.dataAsOf.slice(5)}</span>
+          <span>上市櫃盤後 · {marketSnapshotMeta.dataAsOf.slice(5)}</span>
         </div>
       </header>
       <main className="page-wrap">{children}</main>

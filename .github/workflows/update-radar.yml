@@ -1,0 +1,64 @@
+name: Update Junshi Radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "45 21 * * 1-5"
+      timezone: "Asia/Taipei"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-junshi-radar
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MARKET_DATA_PROVIDER: auto
+      FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+      DATA_TIMEZONE: Asia/Taipei
+      HISTORY_YEARS: 5
+      SCAN_CONCURRENCY: 6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan TWSE and TPEx
+        run: pnpm data:refresh
+
+      - name: Verify snapshot and application
+        run: |
+          pnpm lint
+          pnpm build
+          node --test tests/*.test.mjs
+
+      - name: Commit refreshed radar
+        shell: bash
+        run: |
+          if git diff --quiet -- data/radar-snapshot.json; then
+            echo "Radar snapshot is already current."
+            exit 0
+          fi
+          git config user.name "junshi-radar-bot"
+          git config user.email "junshi-radar-bot@users.noreply.github.com"
+          git add data/radar-snapshot.json
+          git commit -m "data: refresh full-market radar"
+          git push

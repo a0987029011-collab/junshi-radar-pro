@@ -1,9 +1,9 @@
 {
   "meta": {
     "name": "軍師雷達 A 級策略",
-    "version": "1.1.0-verified-snapshot",
-    "mode": "verified-delayed-snapshot",
-    "disclaimer": "本系統為研究與人工審核工具，不構成投資建議。最新行情為盤後快照，並非即時報價；未接入的籌碼條件不得視為符合。"
+    "version": "2.0.0-full-market",
+    "mode": "automatic-full-market-scan",
+    "disclaimer": "本系統僅供研究與人工審核，不構成投資建議，也不會自動下單。"
   },
   "risk": {
     "totalCapital": 600000,
@@ -18,6 +18,7 @@
     "market": "TWSE_TPEx",
     "minimumPaidInCapital": 2000000000,
     "minimumAverageDailyVolumeLots": 1000,
+    "averageDailyVolumeLookback": 20,
     "excludeETFs": true,
     "excludeWarrants": true
   },
@@ -64,7 +65,7 @@
     },
     "shrinkingHistogramSupport": {
       "enabled": true,
-      "description": "MACD 柱體縮短後，對應價格低點長時間未被跌破。",
+      "description": "MACD 柱體縮短時的價格低點，後續長時間未被跌破。",
       "timeframePriority": ["month", "week", "day"],
       "minimumBarsUnbroken": {
         "day": 20,
@@ -112,10 +113,6 @@
         "riskRewardAtLeast2"
       ]
     },
-    "A": {
-      "label": "A 級突破",
-      "requires": ["confirmedTrendlineBreakout"]
-    },
     "A+": {
       "label": "A+ 突破後整理",
       "requires": [
@@ -124,6 +121,10 @@
         "healthyConsolidation",
         "indicatorsRising"
       ]
+    },
+    "A": {
+      "label": "A 級突破",
+      "requires": ["confirmedTrendlineBreakout"]
     },
     "Seed": {
       "label": "Seed 種子",
@@ -136,7 +137,7 @@
       ]
     },
     "Watch": {
-      "label": "觀察池",
+      "label": "觀察",
       "maximumMissingCoreConditions": 2
     }
   },
@@ -166,16 +167,38 @@
     }
   },
   "reports": [
-    { "time": "06:00", "name": "早報", "description": "隔夜資訊與今日候選池" },
-    { "time": "盤中", "name": "突破雷達", "description": "任何時間偵測開盤、盤中與收盤突破" },
-    { "time": "12:00", "name": "盤中匯報", "description": "量價、突破與異常訊號" },
-    { "time": "13:55", "name": "尾盤戰報", "description": "收盤確認與隔日清單" },
-    { "time": "21:30", "name": "籌碼報告", "description": "法人、借券、融券與集中度" }
+    {
+      "time": "06:00",
+      "name": "早報",
+      "description": "整理上一交易日雷達與市場環境"
+    },
+    {
+      "time": "盤中",
+      "name": "突破雷達",
+      "description": "接入授權即時供應商後偵測盤中突破"
+    },
+    {
+      "time": "12:00",
+      "name": "盤中匯報",
+      "description": "更新候選與風險狀態"
+    },
+    {
+      "time": "13:55",
+      "name": "尾盤戰報",
+      "description": "確認收盤型態與量價"
+    },
+    {
+      "time": "21:30",
+      "name": "籌碼報告",
+      "description": "待籌碼連續資料源接入後啟用"
+    }
   ],
   "dataAdapter": {
-    "provider": "twse-verified-snapshot",
-    "historicalSource": "Yahoo Finance 5y; latest OHLCV cross-checked with TWSE STOCK_DAY",
-    "realtimeSource": "not-connected",
+    "provider": "auto",
+    "officialCloseSources": ["TWSE", "TPEx"],
+    "licensedProvider": "Fugle",
+    "fallbackHistoricalSource": "Yahoo Finance delayed history",
+    "realtimeSource": "Fugle WebSocket when licensed key is configured",
     "chipSource": "not-connected"
   }
 }

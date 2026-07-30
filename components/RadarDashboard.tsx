@@ -53,8 +53,8 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
         <div className="eyebrow">今日策略台 · MVP</div>
         <h1>只打最漂亮的第一槍。</h1>
         <p>
-          現有 7 檔候選已改用一致的五年歷史重新計算，最新開高低收量逐檔與
-          TWSE 核對。分類會隨資料改變，不再沿用原本的示範結論。
+          每日掃描上市與上櫃市場，先通過股本與流動性門檻，再以一致的五年歷史
+          計算日、週、月訊號；最新開高低收量由官方盤後行情校正。
         </p>
         <div className="hero-note">
           盤後資料截至 {dataAsOf}｜籌碼尚未接入，不作自動下單
@@ -90,7 +90,7 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
       <section className="section">
         <div className="section-head">
           <div>
-            <h2>已核對候選排行榜</h2>
+            <h2>全市場候選排行榜</h2>
             <p>總分 100 + 結構品質 20，依綜合強度排序</p>
           </div>
           <span className="eyebrow">{visible.length} 檔</span>
