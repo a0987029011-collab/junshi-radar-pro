@@ -12,6 +12,7 @@ import {
 } from "../scripts/fetch-market-snapshot.mjs";
 import {
   classifyCandidate,
+  detectMonthlyStructure,
   detectProfitPlan
 } from "../scripts/lib/strategy-engine.mjs";
 
@@ -221,6 +222,66 @@ test("deep scan converts a structural low and engulfing ceiling into a profit zo
   assert.equal(plan.phase, "entry-ready");
   assert.equal(plan.isClear, true);
   assert.ok(plan.lowRiskReward >= 2);
+});
+
+test("monthly structure keeps the major line and marks the shrinking-histogram support", () => {
+  const monthly = Array.from({ length: 16 }, (_, index) => ({
+    time: `2025-${String(index + 1).padStart(2, "0")}`,
+    open: 42,
+    high: 44,
+    low: 40,
+    close: 41,
+    volume: 1000000,
+    macd: 0,
+    signal: 0,
+    histogram: 0.5,
+    dpo: 0
+  }));
+  monthly[3] = { ...monthly[3], open: 58, high: 62, low: 57, close: 61 };
+  monthly[4] = { ...monthly[4], open: 54, high: 55, low: 51, close: 52 };
+  monthly[5] = { ...monthly[5], open: 52, high: 53, low: 48, close: 49 };
+  monthly[6] = { ...monthly[6], open: 47, high: 53, low: 46.9, close: 50 };
+  monthly[7] = { ...monthly[7], open: 52, high: 58, low: 51, close: 57 };
+  monthly[8] = { ...monthly[8], open: 58, high: 60, low: 55, close: 59 };
+  monthly[9] = { ...monthly[9], open: 54, high: 54, low: 48, close: 49 };
+  monthly[10] = {
+    ...monthly[10],
+    open: 46,
+    high: 47,
+    low: 40.2,
+    close: 41
+  };
+  monthly[11] = {
+    ...monthly[11],
+    open: 32,
+    high: 33,
+    low: 30,
+    close: 31,
+    histogram: -4
+  };
+  monthly[12] = {
+    ...monthly[12],
+    open: 30,
+    high: 31,
+    low: 28.5,
+    close: 30,
+    histogram: -3.5
+  };
+  monthly[13] = { ...monthly[13], close: 29, histogram: -2.5 };
+  monthly[14] = { ...monthly[14], close: 30, histogram: -1.5 };
+  monthly[15] = { ...monthly[15], close: 32, histogram: -0.5 };
+
+  const structure = detectMonthlyStructure(monthly, strategy);
+
+  assert.equal(structure.state, "long-cycle-watch");
+  assert.equal(structure.longCycleWatch, true);
+  assert.equal(structure.keySupport, 28.5);
+  assert.equal(structure.priorKeySupport, 46.9);
+  assert.equal(structure.targetZoneLow, 40.2);
+  assert.equal(structure.targetZoneHigh, 41);
+  assert.equal(structure.majorTrendline.startPrice, 62);
+  assert.equal(structure.majorTrendline.endPrice, 60);
+  assert.equal(structure.majorTrendBroken, false);
 });
 
 function candidateWithSignals(overrides = {}) {

@@ -29,6 +29,7 @@ test("radar snapshot has one consistent market date and universe audit", () => {
     assert.ok(candidate.score >= 0 && candidate.score <= 100);
     assert.ok(candidate.structureScore >= 0 && candidate.structureScore <= 20);
     assert.ok(candidate.profitPlan);
+    assert.ok(candidate.monthlyStructure);
     assert.ok(candidate.deepScanScore >= 0 && candidate.deepScanScore <= 100);
     assert.ok(
       candidate.profitPlan.entryZoneLow <= candidate.profitPlan.entryZoneHigh
@@ -36,9 +37,40 @@ test("radar snapshot has one consistent market date and universe audit", () => {
     assert.ok(
       candidate.profitPlan.stopLoss <= candidate.profitPlan.entryZoneHigh
     );
+    assert.ok(
+      candidate.monthlyStructure.score >= 0 &&
+        candidate.monthlyStructure.score <= 100
+    );
     assert.equal(candidate.signals.chipStructure, 0);
     assert.equal(candidate.signals.chipStructureStable, false);
   }
+});
+
+test("long-cycle monthly watches keep support and do not claim a major breakout", () => {
+  const watches = verifiedCandidates.filter(
+    (candidate) => candidate.monthlyStructure?.longCycleWatch
+  );
+  assert.ok(watches.length > 0);
+  for (const candidate of watches) {
+    const structure = candidate.monthlyStructure;
+    assert.equal(structure.state, "long-cycle-watch");
+    assert.equal(structure.supportHeld, true);
+    assert.equal(structure.histogramContracting, true);
+    assert.equal(structure.majorTrendBroken, false);
+    assert.ok(structure.keySupport > 0);
+    assert.ok(structure.majorTrendline);
+  }
+
+  const runLong = verifiedCandidates.find(
+    (candidate) => candidate.symbol === "1808"
+  );
+  assert.equal(runLong.monthlyStructure.longCycleWatch, true);
+  assert.equal(runLong.monthlyStructure.keySupport, 28.5);
+  assert.equal(runLong.monthlyStructure.priorKeySupport, 46.95);
+  assert.equal(runLong.monthlyStructure.targetZoneLow, 40.25);
+  assert.equal(runLong.monthlyStructure.targetZoneHigh, 41.65);
+  assert.equal(runLong.monthlyStructure.majorTrendline.startTime, "2024-03");
+  assert.equal(runLong.monthlyStructure.majorTrendline.endTime, "2024-09");
 });
 
 test("deep profit-zone candidates expose an auditable range", () => {

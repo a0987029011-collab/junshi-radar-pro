@@ -12,11 +12,12 @@ import {
 } from "./StockUI";
 import { ReviewControls } from "./ReviewControls";
 
-type RadarFilter = "All" | "Deep" | Classification;
+type RadarFilter = "All" | "Deep" | "LongCycle" | Classification;
 
 const filters: { value: RadarFilter; label: string }[] = [
   { value: "All", label: "全部" },
   { value: "Deep", label: "深層獲利區" },
+  { value: "LongCycle", label: "月線長週期" },
   { value: "S", label: "S 級" },
   { value: "A", label: "A 級" },
   { value: "A+", label: "A+" },
@@ -37,15 +38,27 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
               (right.deepScanScore ?? 0) - (left.deepScanScore ?? 0)
           );
       }
+      if (filter === "LongCycle") {
+        return stocks
+          .filter((stock) => stock.monthlyStructure?.longCycleWatch)
+          .sort(
+            (left, right) =>
+              (right.monthlyStructure?.score ?? 0) -
+              (left.monthlyStructure?.score ?? 0)
+          );
+      }
       return stocks.filter((stock) => stock.classification === filter);
     },
     [filter, stocks]
   );
-  const counts = filters.slice(2).map((item) => ({
+  const counts = filters.slice(3).map((item) => ({
     ...item,
     count: stocks.filter((stock) => stock.classification === item.value).length
   }));
   const deepCount = stocks.filter((stock) => stock.profitPlan?.isClear).length;
+  const longCycleCount = stocks.filter(
+    (stock) => stock.monthlyStructure?.longCycleWatch
+  ).length;
   const wanHai = stocks.find((stock) => stock.symbol === "2615")!;
   const dataAsOf = stocks[0]?.dataAsOf ?? "—";
   const position = estimatePosition(
@@ -90,6 +103,15 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
             <span className="profit-zone-badge">深層獲利區</span>
             <strong>{deepCount}</strong>
             <span>進場與獲利帶清楚</span>
+          </button>
+          <button
+            className="count-card long-cycle-card"
+            onClick={() => setFilter("LongCycle")}
+            type="button"
+          >
+            <span className="long-cycle-badge">月線長週期</span>
+            <strong>{longCycleCount}</strong>
+            <span>主壓未破、縮柱守線</span>
           </button>
           {counts.map((item) => (
             <button
@@ -140,7 +162,7 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                   <tr>
                     <th>#</th><th>股票</th><th>分類</th><th>總分</th>
                     <th>成熟度</th><th>現價</th><th>關鍵價</th>
-                    <th>停損</th><th>獲利區</th><th>區間 R/R</th>
+                    <th>停損</th><th>月線</th><th>獲利區</th><th>區間 R/R</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -177,6 +199,11 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                       <td>{formatPrice(stock.keyLevel)}</td>
                       <td>{formatPrice(stock.stopLoss)}</td>
                       <td>
+                        {stock.monthlyStructure?.longCycleWatch ? (
+                          <span className="long-cycle-badge">縮柱守線</span>
+                        ) : "—"}
+                      </td>
+                      <td>
                         {stock.profitPlan?.profitZoneLow != null &&
                         stock.profitPlan.profitZoneHigh != null
                           ? `${formatPrice(stock.profitPlan.profitZoneLow)}–${formatPrice(stock.profitPlan.profitZoneHigh)}`
@@ -208,6 +235,14 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
                             style={{ marginLeft: 6 }}
                           >
                             深層區間
+                          </span>
+                        ) : null}
+                        {stock.monthlyStructure?.longCycleWatch ? (
+                          <span
+                            className="long-cycle-badge"
+                            style={{ marginLeft: 6 }}
+                          >
+                            月線觀察
                           </span>
                         ) : null}
                         <div className="stock-name" style={{ marginTop: 9 }}>

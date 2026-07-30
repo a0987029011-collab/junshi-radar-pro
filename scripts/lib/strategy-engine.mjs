@@ -330,6 +330,304 @@ function keyStructure(daily, weekly, monthly, config) {
   };
 }
 
+function trendlineDescriptor(candles, firstIndex, secondIndex) {
+  if (
+    firstIndex == null ||
+    secondIndex == null ||
+    secondIndex <= firstIndex
+  ) {
+    return null;
+  }
+  const slope =
+    (candles[secondIndex].high - candles[firstIndex].high) /
+    (secondIndex - firstIndex);
+  const valueAt = (index) => candles[firstIndex].high + slope * (index - firstIndex);
+  return {
+    startTime: candles[firstIndex].time,
+    startPrice: roundToTick(candles[firstIndex].high),
+    endTime: candles[secondIndex].time,
+    endPrice: roundToTick(candles[secondIndex].high),
+    currentPrice: roundToTick(valueAt(candles.length - 1)),
+    slope,
+    firstIndex,
+    secondIndex,
+    valueAt
+  };
+}
+
+function findBullishTrackedCrosses(candles) {
+  const crosses = [];
+  const anchors = findSwingHighIndexes(candles, 2);
+  for (const anchorIndex of anchors) {
+    let lowerHighIndex = null;
+    for (let index = anchorIndex + 1; index < candles.length; index += 1) {
+      const candle = candles[index];
+      if (lowerHighIndex != null) {
+        const line = trendlineDescriptor(
+          candles,
+          anchorIndex,
+          lowerHighIndex
+        );
+        const linePrice = line.valueAt(index);
+        const bullishBodyCross =
+          candle.close > candle.open &&
+          candle.open <= linePrice &&
+          candle.close > linePrice;
+        if (bullishBodyCross) {
+          crosses.push({
+            anchorIndex,
+            lowerHighIndex,
+            crossIndex: index,
+            keySupport: candle.low,
+            linePrice
+          });
+          break;
+        }
+      }
+      if (
+        candle.high < candles[anchorIndex].high &&
+        (lowerHighIndex == null ||
+          candle.high < candles[lowerHighIndex].high)
+      ) {
+        lowerHighIndex = index;
+      }
+    }
+  }
+  return crosses;
+}
+
+function findMonthlyHistogramBase(candles, settings) {
+  const start = Math.max(
+    0,
+    candles.length - settings.histogramLookbackBars
+  );
+  let troughIndex = -1;
+  for (let index = start; index < candles.length - 1; index += 1) {
+    if (
+      candles[index].histogram < 0 &&
+      (troughIndex < 0 ||
+        candles[index].histogram < candles[troughIndex].histogram)
+    ) {
+      troughIndex = index;
+    }
+  }
+  if (troughIndex < 0) return null;
+
+  let supportIndex = -1;
+  for (let index = troughIndex + 1; index < candles.length; index += 1) {
+    if (
+      candles[index].histogram < 0 &&
+      Math.abs(candles[index].histogram) <
+        Math.abs(candles[index - 1].histogram)
+    ) {
+      supportIndex = index;
+      break;
+    }
+  }
+  if (supportIndex < 0) return null;
+
+  const latest = candles.at(-1);
+  const support = candles[supportIndex].low;
+  const closeFloor =
+    support * (1 - settings.supportCloseBufferPercent / 100);
+  const supportHeld = candles
+    .slice(supportIndex + 1)
+    .every((candle) => candle.close >= closeFloor);
+  let contractionBars = 0;
+  for (let index = candles.length - 1; index > troughIndex; index -= 1) {
+    if (
+      Math.abs(candles[index].histogram) <=
+      Math.abs(candles[index - 1].histogram)
+    ) {
+      contractionBars += 1;
+    }
+  }
+  const histogramContracting =
+    latest.histogram < 0 &&
+    Math.abs(latest.histogram) <
+      Math.abs(candles[troughIndex].histogram) &&
+    contractionBars >= settings.minimumContractionBars;
+
+  return {
+    troughTime: candles[troughIndex].time,
+    supportTime: candles[supportIndex].time,
+    support: roundToTick(support),
+    supportHeld,
+    histogramContracting,
+    contractionBars
+  };
+}
+
+export function detectMonthlyStructure(monthly, config) {
+  const settings = config.patterns.monthlyStructureWatch;
+  const candles = monthly.slice(-settings.lookbackBars);
+  const latest = candles.at(-1);
+  const trackedCrosses = findBullishTrackedCrosses(candles);
+  let structure = null;
+
+  for (const cross of trackedCrosses) {
+    const breakIndex = candles.findIndex(
+      (candle, index) =>
+        index > cross.crossIndex &&
+        candle.close < cross.keySupport &&
+        candle.close < candle.open
+    );
+    if (breakIndex < 0) continue;
+
+    const swingHighs = findSwingHighIndexes(candles, 2).filter(
+      (index) => index >= cross.anchorIndex && index < breakIndex
+    );
+    const highestIndex = swingHighs.reduce(
+      (best, index) =>
+        best == null || candles[index].high > candles[best].high
+          ? index
+          : best,
+      null
+    );
+    if (highestIndex == null) continue;
+    const secondIndex = swingHighs
+      .filter(
+        (index) =>
+          index > highestIndex &&
+          candles[index].high < candles[highestIndex].high &&
+          ((candles[highestIndex].high - candles[index].high) /
+            candles[highestIndex].high) *
+            100 >=
+            settings.minimumMajorHighDropPercent &&
+          ((candles[highestIndex].high - candles[index].high) /
+            candles[highestIndex].high) *
+            100 <=
+            settings.maximumSecondHighGapPercent
+      )
+      .sort((left, right) => candles[right].high - candles[left].high)[0];
+    if (secondIndex == null) continue;
+
+    structure = {
+      cross,
+      breakIndex,
+      majorLine: trendlineDescriptor(candles, highestIndex, secondIndex)
+    };
+  }
+
+  const histogramBase = findMonthlyHistogramBase(candles, settings);
+  if (!structure) {
+    return {
+      state: "tracking",
+      longCycleWatch: false,
+      drilldownReady: false,
+      majorTrendBroken: false,
+      ignoredFollowerBreakout: false,
+      keySupport: histogramBase?.support ?? null,
+      supportHeld: histogramBase?.supportHeld ?? false,
+      histogramContracting:
+        histogramBase?.histogramContracting ?? false,
+      contractionBars: histogramBase?.contractionBars ?? 0,
+      priorKeySupport: null,
+      structureBreakTime: null,
+      targetZoneLow: null,
+      targetZoneHigh: null,
+      majorTrendline: null,
+      followerTrendline: null,
+      score: histogramBase?.histogramContracting ? 20 : 0
+    };
+  }
+
+  const major = structure.majorLine;
+  const majorCrossIndex = candles.findIndex((candle, index) => {
+    if (index <= major.secondIndex) return false;
+    const linePrice = major.valueAt(index);
+    return (
+      candle.close > candle.open &&
+      candle.open <= linePrice &&
+      candle.close > linePrice
+    );
+  });
+  const majorTrendBroken = majorCrossIndex >= 0;
+  const followerCandidates = findSwingHighIndexes(candles, 2).filter(
+    (index) =>
+      index > structure.breakIndex &&
+      candles[index].high < candles[major.secondIndex].high
+  );
+  const followerIndex = followerCandidates.at(-1);
+  const follower =
+    followerIndex == null
+      ? null
+      : trendlineDescriptor(candles, major.secondIndex, followerIndex);
+  const followerCrossIndex =
+    follower == null
+      ? -1
+      : candles.findIndex((candle, index) => {
+          if (index <= follower.secondIndex) return false;
+          const linePrice = follower.valueAt(index);
+          return candle.high > linePrice || candle.close > linePrice;
+        });
+  const ignoredFollowerBreakout =
+    followerCrossIndex >= 0 && !majorTrendBroken;
+  const breakCandle = candles[structure.breakIndex];
+  const targetZoneLow =
+    breakCandle.low > latest.close
+      ? roundToTick(breakCandle.low)
+      : null;
+  const targetZoneHigh =
+    targetZoneLow == null
+      ? null
+      : roundToTick(
+          Math.max(breakCandle.low, Math.min(breakCandle.open, breakCandle.close))
+        );
+  const longCycleWatch =
+    !majorTrendBroken &&
+    Boolean(histogramBase?.histogramContracting) &&
+    Boolean(histogramBase?.supportHeld);
+  let score = 0;
+  if (major) score += 25;
+  if (!majorTrendBroken) score += 10;
+  if (histogramBase?.histogramContracting) score += 25;
+  if (histogramBase?.supportHeld) score += 20;
+  if (targetZoneLow != null) score += 10;
+  if (ignoredFollowerBreakout) score += 10;
+
+  return {
+    state: majorTrendBroken
+      ? "major-breakout"
+      : histogramBase && !histogramBase.supportHeld
+        ? "support-broken"
+        : longCycleWatch
+          ? "long-cycle-watch"
+          : "tracking",
+    longCycleWatch,
+    drilldownReady: false,
+    majorTrendBroken,
+    ignoredFollowerBreakout,
+    keySupport: histogramBase?.support ?? null,
+    supportHeld: histogramBase?.supportHeld ?? false,
+    histogramContracting:
+      histogramBase?.histogramContracting ?? false,
+    contractionBars: histogramBase?.contractionBars ?? 0,
+    priorKeySupport: roundToTick(structure.cross.keySupport),
+    structureBreakTime: breakCandle.time,
+    targetZoneLow,
+    targetZoneHigh,
+    majorTrendline: {
+      startTime: major.startTime,
+      startPrice: major.startPrice,
+      endTime: major.endTime,
+      endPrice: major.endPrice,
+      currentPrice: major.currentPrice
+    },
+    followerTrendline:
+      follower == null
+        ? null
+        : {
+            startTime: follower.startTime,
+            startPrice: follower.startPrice,
+            endTime: follower.endTime,
+            endPrice: follower.endPrice,
+            currentPrice: follower.currentPrice
+          },
+    score: Math.min(100, score)
+  };
+}
+
 function clusteredSwingResistance(candles) {
   const points = findSwingHighIndexes(candles)
     .map((index) => ({
@@ -680,6 +978,7 @@ export function analyzeStock(stock, config, meta) {
   const dailyPrevious = daily.at(-2);
   const support = keyStructure(daily, weekly, monthly, config);
   const trendline = trendlineState(daily, config);
+  const monthlyStructure = detectMonthlyStructure(monthly, config);
   const profitPlan = detectProfitPlan(
     daily,
     support,
@@ -689,6 +988,9 @@ export function analyzeStock(stock, config, meta) {
   const monthlyTrend = trendScore(monthly);
   const weeklyTrend = trendScore(weekly);
   const dailyTrend = trendScore(daily);
+  monthlyStructure.drilldownReady =
+    monthlyStructure.longCycleWatch &&
+    (weeklyTrend >= 0.65 || dailyTrend >= 0.65);
   const averageVolumeLots =
     stock.daily
       .slice(-20)
@@ -762,6 +1064,12 @@ export function analyzeStock(stock, config, meta) {
     `自動辨識關鍵價位 ${support.keyLevel}，近 120 根 K 棒測試約 ${support.tests} 次。`,
     profitPlan.profitZoneLow != null && profitPlan.profitZoneHigh != null
       ? `深層掃描辨識進場區 ${profitPlan.entryZoneLow}–${profitPlan.entryZoneHigh}，上方獲利區 ${profitPlan.profitZoneLow}–${profitPlan.profitZoneHigh}。`
+      : null,
+    monthlyStructure.longCycleWatch
+      ? `月線主下降壓力仍有效，縮柱支撐 ${monthlyStructure.keySupport} 守住；列入長週期觀察，等待週線／日線機會。`
+      : null,
+    monthlyStructure.targetZoneLow != null
+      ? `前次結構破壞 K 形成月線目標區 ${monthlyStructure.targetZoneLow}–${monthlyStructure.targetZoneHigh}。`
       : null
   ].filter(Boolean);
   const missingConditions = [
@@ -776,6 +1084,9 @@ export function analyzeStock(stock, config, meta) {
       : null,
     !profitPlan.isClear
       ? "尚未同時滿足靠近進場區、上方壓力區清楚且風險報酬充足的深層區間條件。"
+      : null,
+    monthlyStructure.ignoredFollowerBreakout
+      ? "目前即使越過短跟隨線，仍受月線大級別下降壓力壓制，不列為有效突破。"
       : null,
     "法人、借券與集中度資料仍未形成連續序列，籌碼分暫不自動加分。"
   ].filter(Boolean);
@@ -797,6 +1108,7 @@ export function analyzeStock(stock, config, meta) {
     firstTarget,
     profitPlan,
     deepScanScore: profitPlan.clarityScore,
+    monthlyStructure,
     signals: {
       monthlyTrend,
       weeklyTrend,
@@ -876,6 +1188,7 @@ export function sortCandidates(candidates) {
     candidate.score +
     candidate.structureScore * 0.25 +
     (candidate.deepScanScore ?? 0) * 0.08 +
+    (candidate.monthlyStructure?.longCycleWatch ? 6 : 0) +
     (candidate.profitPlan?.isClear ? 12 : 0);
   return [...candidates].sort(
     (left, right) => rankingValue(right) - rankingValue(left)

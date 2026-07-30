@@ -8,7 +8,13 @@ import {
   type PriceAdjustment
 } from "../lib/market-data";
 import { fitDescendingTrendline } from "../lib/scanner-engine";
-import type { Candle, ProfitPlan, Timeframe } from "../lib/types";
+import type {
+  Candle,
+  MonthlyStructurePlan,
+  ProfitPlan,
+  StructureTrendline,
+  Timeframe
+} from "../lib/types";
 
 const timeframeLabels: { value: Timeframe; label: string }[] = [
   { value: "day", label: "日 K" },
@@ -20,7 +26,9 @@ function drawChart(
   canvas: HTMLCanvasElement,
   candles: Candle[],
   keyLevel: number,
-  profitPlan?: ProfitPlan
+  profitPlan?: ProfitPlan,
+  monthlyStructure?: MonthlyStructurePlan,
+  showMonthlyStructure = false
 ) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -41,7 +49,7 @@ function drawChart(
   const dpoTop = macdTop + macdHeight + 18;
   const dpoHeight = height - dpoTop - pad.bottom;
   const chartWidth = width - pad.left - pad.right;
-  const planPrices = profitPlan
+  const planPrices = profitPlan && !showMonthlyStructure
     ? [
         profitPlan.entryZoneLow,
         profitPlan.entryZoneHigh,
@@ -50,10 +58,29 @@ function drawChart(
         profitPlan.profitZoneHigh
       ].filter((value): value is number => value != null)
     : [];
+  const structurePrices =
+    showMonthlyStructure && monthlyStructure
+      ? [
+          monthlyStructure.keySupport,
+          monthlyStructure.targetZoneLow,
+          monthlyStructure.targetZoneHigh,
+          monthlyStructure.majorTrendline?.startPrice,
+          monthlyStructure.majorTrendline?.endPrice,
+          monthlyStructure.followerTrendline?.endPrice
+        ].filter((value): value is number => value != null)
+      : [];
   const maxPrice =
-    Math.max(...candles.map((item) => item.high), ...planPrices) * 1.015;
+    Math.max(
+      ...candles.map((item) => item.high),
+      ...planPrices,
+      ...structurePrices
+    ) * 1.015;
   const minPrice =
-    Math.min(...candles.map((item) => item.low), ...planPrices) * 0.985;
+    Math.min(
+      ...candles.map((item) => item.low),
+      ...planPrices,
+      ...structurePrices
+    ) * 0.985;
   const maxVolume = Math.max(...candles.map((item) => item.volume));
   const xStep = chartWidth / candles.length;
   const candleWidth = Math.max(2, xStep * 0.58);
@@ -84,7 +111,103 @@ function drawChart(
     );
   }
 
-  if (profitPlan) {
+  if (showMonthlyStructure && monthlyStructure) {
+    const drawStructureTrendline = (
+      line: StructureTrendline | null,
+      color: string,
+      label: string,
+      dash: number[] = []
+    ) => {
+      if (!line) return;
+      const firstIndex = candles.findIndex(
+        (candle) => candle.time === line.startTime
+      );
+      const secondIndex = candles.findIndex(
+        (candle) => candle.time === line.endTime
+      );
+      if (firstIndex < 0 || secondIndex <= firstIndex) return;
+      const slope =
+        (line.endPrice - line.startPrice) / (secondIndex - firstIndex);
+      const endIndex = candles.length - 1;
+      const endPrice =
+        line.startPrice + slope * (endIndex - firstIndex);
+      ctx.setLineDash(dash);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(toX(firstIndex), toPriceY(line.startPrice));
+      ctx.lineTo(toX(endIndex), toPriceY(endPrice));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.fillText(label, toX(firstIndex) + 5, toPriceY(line.startPrice) - 7);
+      [firstIndex, secondIndex].forEach((index) => {
+        const price =
+          line.startPrice + slope * (index - firstIndex);
+        ctx.beginPath();
+        ctx.arc(toX(index), toPriceY(price), 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    };
+
+    drawStructureTrendline(
+      monthlyStructure.majorTrendline,
+      "#b797ff",
+      "月線主壓"
+    );
+    drawStructureTrendline(
+      monthlyStructure.followerTrendline,
+      "#77a7ff",
+      "跟隨線",
+      [5, 4]
+    );
+
+    if (monthlyStructure.keySupport != null) {
+      const supportY = toPriceY(monthlyStructure.keySupport);
+      ctx.strokeStyle = "#f6bd4b";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, supportY);
+      ctx.lineTo(width - pad.right, supportY);
+      ctx.stroke();
+      ctx.fillStyle = "#f6bd4b";
+      ctx.fillText(
+        `縮柱支撐 ${monthlyStructure.keySupport}`,
+        pad.left + 6,
+        supportY - 6
+      );
+    }
+
+    if (
+      monthlyStructure.targetZoneLow != null &&
+      monthlyStructure.targetZoneHigh != null
+    ) {
+      const top = toPriceY(monthlyStructure.targetZoneHigh);
+      const bottom = toPriceY(monthlyStructure.targetZoneLow);
+      ctx.fillStyle = "rgba(46, 214, 155, .1)";
+      ctx.fillRect(
+        pad.left,
+        top,
+        chartWidth,
+        Math.max(2, bottom - top)
+      );
+      ctx.strokeStyle = "#2ed69b";
+      ctx.strokeRect(
+        pad.left,
+        top,
+        chartWidth,
+        Math.max(2, bottom - top)
+      );
+      ctx.fillStyle = "#2ed69b";
+      ctx.fillText(
+        `月線目標 ${monthlyStructure.targetZoneLow}–${monthlyStructure.targetZoneHigh}`,
+        pad.left + 6,
+        top + 12
+      );
+    }
+  }
+
+  if (profitPlan && !showMonthlyStructure) {
     const zoneX = pad.left + chartWidth * 0.55;
     const zoneWidth = width - pad.right - zoneX;
     const drawZone = (
@@ -178,7 +301,9 @@ function drawChart(
   ctx.fillStyle = "#f6bd4b";
   ctx.fillText(`關鍵 ${keyLevel}`, width - pad.right + 4, keyY - 5);
 
-  const trendline = fitDescendingTrendline(candles, 2);
+  const trendline = showMonthlyStructure
+    ? null
+    : fitDescendingTrendline(candles, 2);
   if (trendline) {
     const startIndex = trendline.touchIndexes[0];
     const lastTouchIndex = trendline.touchIndexes.at(-1)!;
@@ -366,11 +491,13 @@ function drawChart(
 export function CandleChart({
   symbol,
   keyLevel,
-  profitPlan
+  profitPlan,
+  monthlyStructure
 }: {
   symbol: string;
   keyLevel: number;
   profitPlan?: ProfitPlan;
+  monthlyStructure?: MonthlyStructurePlan;
 }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
   const [adjustment, setAdjustment] =
@@ -386,12 +513,27 @@ export function CandleChart({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !candles.length) return;
-    const redraw = () => drawChart(canvas, candles, keyLevel, profitPlan);
+    const redraw = () =>
+      drawChart(
+        canvas,
+        candles,
+        keyLevel,
+        profitPlan,
+        monthlyStructure,
+        timeframe === "month" && adjustment === "adjusted"
+      );
     redraw();
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [candles, keyLevel, profitPlan, timeframe]);
+  }, [
+    adjustment,
+    candles,
+    keyLevel,
+    monthlyStructure,
+    profitPlan,
+    timeframe
+  ]);
 
   return (
     <section className="panel chart-shell">
@@ -441,6 +583,7 @@ export function CandleChart({
           <span><i className="legend-dot" style={{ background: "var(--down)" }} />跌</span>
           <span><i className="legend-dot" style={{ background: "var(--amber)" }} />關鍵價</span>
           <span><i className="legend-dot" style={{ background: "var(--blue)" }} />趨勢線</span>
+          <span><i className="legend-dot" style={{ background: "var(--violet)" }} />月線主壓</span>
           <span><i className="legend-dot" style={{ background: "var(--down)" }} />獲利區</span>
         </div>
       </div>

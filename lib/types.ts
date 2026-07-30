@@ -48,6 +48,37 @@ export interface ProfitPlan {
   resistanceTouches: number;
 }
 
+export interface StructureTrendline {
+  startTime: string;
+  startPrice: number;
+  endTime: string;
+  endPrice: number;
+  currentPrice: number;
+}
+
+export interface MonthlyStructurePlan {
+  state:
+    | "tracking"
+    | "long-cycle-watch"
+    | "support-broken"
+    | "major-breakout";
+  longCycleWatch: boolean;
+  drilldownReady: boolean;
+  majorTrendBroken: boolean;
+  ignoredFollowerBreakout: boolean;
+  keySupport: number | null;
+  supportHeld: boolean;
+  histogramContracting: boolean;
+  contractionBars: number;
+  priorKeySupport: number | null;
+  structureBreakTime: string | null;
+  targetZoneLow: number | null;
+  targetZoneHigh: number | null;
+  majorTrendline: StructureTrendline | null;
+  followerTrendline: StructureTrendline | null;
+  score: number;
+}
+
 export interface StockCandidate {
   symbol: string;
   name: string;
@@ -62,6 +93,7 @@ export interface StockCandidate {
   firstTarget: number;
   profitPlan?: ProfitPlan;
   deepScanScore?: number;
+  monthlyStructure?: MonthlyStructurePlan;
   classificationHint?: Classification;
   signals: StrategySignals;
   structureSignals: StructureSignals;

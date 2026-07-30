@@ -29,6 +29,7 @@ export default async function StockPage({
   const stock = getScannedStock(symbol);
   if (!stock) notFound();
   const plan = stock.profitPlan;
+  const monthlyStructure = stock.monthlyStructure;
   const phaseLabels = {
     forming: "結構形成中",
     "entry-ready": "接近進場區",
@@ -80,6 +81,93 @@ export default async function StockPage({
           </a>
         </div>
       </section>
+
+      {monthlyStructure ? (
+        <section
+          className={`panel monthly-structure-panel ${
+            monthlyStructure.longCycleWatch ? "monthly-structure-watch" : ""
+          }`}
+        >
+          <div className="section-head">
+            <div>
+              <span className="long-cycle-badge">
+                {monthlyStructure.longCycleWatch
+                  ? "月線長週期觀察"
+                  : "月線結構追蹤"}
+              </span>
+              <h2>主下降壓力與跟隨結構</h2>
+              <p>
+                {monthlyStructure.majorTrendBroken
+                  ? "大級別下降線已被紅 K 實體穿越"
+                  : monthlyStructure.longCycleWatch
+                    ? "大級別壓力未破；縮柱低點守住，等待週／日線"
+                    : "結構尚未完成或關鍵支撐未成立"}
+              </p>
+            </div>
+            <strong className="monthly-structure-score">
+              {monthlyStructure.score}
+            </strong>
+          </div>
+          <div className="monthly-structure-grid">
+            <div>
+              <span>大級別下降線</span>
+              <strong>
+                {monthlyStructure.majorTrendline
+                  ? `${monthlyStructure.majorTrendline.startPrice} → ${monthlyStructure.majorTrendline.endPrice}`
+                  : "尚未形成"}
+              </strong>
+              <small>
+                {monthlyStructure.majorTrendline
+                  ? `${monthlyStructure.majorTrendline.startTime} 至 ${monthlyStructure.majorTrendline.endTime}；目前線壓約 ${monthlyStructure.majorTrendline.currentPrice}`
+                  : "等待最高點與次高點"}
+              </small>
+            </div>
+            <div>
+              <span>月線縮柱關鍵支撐</span>
+              <strong>
+                {monthlyStructure.keySupport != null
+                  ? formatPrice(monthlyStructure.keySupport)
+                  : "—"}
+              </strong>
+              <small>
+                {monthlyStructure.supportHeld ? "月收盤仍守住" : "已失守"}
+              </small>
+            </div>
+            <div>
+              <span>結構破壞 K 目標區</span>
+              <strong>
+                {monthlyStructure.targetZoneLow != null &&
+                monthlyStructure.targetZoneHigh != null
+                  ? `${formatPrice(monthlyStructure.targetZoneLow)}–${formatPrice(monthlyStructure.targetZoneHigh)}`
+                  : "—"}
+              </strong>
+              <small>
+                {monthlyStructure.structureBreakTime
+                  ? `來源 ${monthlyStructure.structureBreakTime}`
+                  : "等待結構破壞 K"}
+              </small>
+            </div>
+            <div>
+              <span>下一步</span>
+              <strong>
+                {monthlyStructure.drilldownReady
+                  ? "下鑽週／日線"
+                  : "月線繼續等待"}
+              </strong>
+              <small>短跟隨線突破不取代大級別壓力</small>
+            </div>
+          </div>
+          {monthlyStructure.followerTrendline ? (
+            <div className="structure-rule">
+              跟隨線：
+              {monthlyStructure.followerTrendline.startTime}{" "}
+              {monthlyStructure.followerTrendline.startPrice} →{" "}
+              {monthlyStructure.followerTrendline.endTime}{" "}
+              {monthlyStructure.followerTrendline.endPrice}。只有穿越短線時不直接列為月線突破。
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {plan ? (
         <section
@@ -158,6 +246,7 @@ export default async function StockPage({
 
       <CandleChart
         keyLevel={stock.keyLevel}
+        monthlyStructure={monthlyStructure}
         profitPlan={plan}
         symbol={stock.symbol}
       />

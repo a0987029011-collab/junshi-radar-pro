@@ -107,6 +107,15 @@
       "maximumProfitZoneDistancePercent": 45,
       "minimumLowRiskReward": 1.5,
       "minimumHighRiskReward": 2
+    },
+    "monthlyStructureWatch": {
+      "enabled": true,
+      "lookbackBars": 72,
+      "histogramLookbackBars": 30,
+      "minimumContractionBars": 3,
+      "supportCloseBufferPercent": 0,
+      "minimumMajorHighDropPercent": 0.5,
+      "maximumSecondHighGapPercent": 15
     }
   },
   "classificationRules": {
