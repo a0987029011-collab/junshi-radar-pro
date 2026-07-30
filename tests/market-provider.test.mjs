@@ -7,6 +7,7 @@ import {
   parseCompanyBasics,
   parseTpexQuotes,
   parseTwseLegacyQuotes,
+  parseTwseMiIndexQuotes,
   parseTwseOpenApiQuotes
 } from "../scripts/fetch-market-snapshot.mjs";
 import { classifyCandidate } from "../scripts/lib/strategy-engine.mjs";
@@ -46,6 +47,44 @@ test("TWSE legacy and OpenAPI rows normalize to the same quote shape", () => {
   assert.deepEqual(legacy.quotes[0], openApi.quotes[0]);
 });
 
+test("TWSE MI_INDEX rows normalize the current official close", () => {
+  const current = parseTwseMiIndexQuotes({
+    date: "20260730",
+    tables: [
+      {
+        fields: [
+          "證券代號",
+          "證券名稱",
+          "成交股數",
+          "成交筆數",
+          "成交金額",
+          "開盤價",
+          "最高價",
+          "最低價",
+          "收盤價"
+        ],
+        data: [
+          [
+            "2603",
+            "長榮",
+            "6,941,425",
+            "8,000",
+            "1,395,000,000",
+            "202.5",
+            "202.5",
+            "199.5",
+            "201.0"
+          ]
+        ]
+      }
+    ]
+  });
+  assert.equal(current.date, "2026-07-30");
+  assert.equal(current.quotes[0].symbol, "2603");
+  assert.equal(current.quotes[0].close, 201);
+  assert.equal(current.quotes[0].volume, 6941425);
+});
+
 test("TPEx quotes and company basics accept official field names", () => {
   const tpex = parseTpexQuotes(
     [
@@ -81,6 +120,27 @@ test("TPEx quotes and company basics accept official field names", () => {
   assert.equal(basics[0].symbol, "5347");
   assert.equal(basics[0].sector, "半導體業");
   assert.equal(basics[0].paidInCapital, 16389827670);
+});
+
+test("TPEx company basics accept the live OpenAPI field names", () => {
+  const basics = parseCompanyBasics(
+    [
+      {
+        SecuritiesCompanyCode: "5347",
+        CompanyName: "世界先進積體電路股份有限公司",
+        CompanyAbbreviation: "世界",
+        SecuritiesIndustryCode: "24",
+        "Paidin.Capital.NTDollars": "16,389,827,670",
+        IssueShares: "1,638,982,767"
+      }
+    ],
+    "TPEx"
+  );
+  assert.equal(basics[0].symbol, "5347");
+  assert.equal(basics[0].name, "世界");
+  assert.equal(basics[0].industryCode, "24");
+  assert.equal(basics[0].paidInCapital, 16389827670);
+  assert.equal(basics[0].issuedShares, 1638982767);
 });
 
 test("official quote replaces the latest delayed historical row", () => {

@@ -21,6 +21,8 @@ const URLS = {
   tpexBasics: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
   twseQuotes:
     "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json",
+  twseQuotesCurrent:
+    "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999",
   twseQuotesOpenApi:
     "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
   tpexQuotes:
@@ -194,6 +196,46 @@ export function parseTwseOpenApiQuotes(rows, fallbackDate = taipeiToday()) {
   return { date: quotes[0]?.date ?? fallbackDate, quotes };
 }
 
+export function parseTwseMiIndexQuotes(payload) {
+  const date = marketDateToIso(payload?.date) ?? taipeiToday();
+  const table = (Array.isArray(payload?.tables) ? payload.tables : []).find(
+    (candidate) =>
+      Array.isArray(candidate?.fields) &&
+      candidate.fields.includes("證券代號") &&
+      candidate.fields.includes("收盤價")
+  );
+  if (!table) {
+    throw new Error("TWSE MI_INDEX daily close table is unavailable");
+  }
+  const indexOf = (field) => table.fields.indexOf(field);
+  const indexes = {
+    symbol: indexOf("證券代號"),
+    name: indexOf("證券名稱"),
+    volume: indexOf("成交股數"),
+    open: indexOf("開盤價"),
+    high: indexOf("最高價"),
+    low: indexOf("最低價"),
+    close: indexOf("收盤價")
+  };
+  if (Object.values(indexes).some((index) => index < 0)) {
+    throw new Error("TWSE MI_INDEX daily close fields are incomplete");
+  }
+  const quotes = (Array.isArray(table.data) ? table.data : [])
+    .map((row) => ({
+      symbol: String(row[indexes.symbol] ?? "").trim(),
+      name: String(row[indexes.name] ?? "").trim(),
+      exchange: "TWSE",
+      date,
+      volume: numberFromMarket(row[indexes.volume]),
+      open: numberFromMarket(row[indexes.open]),
+      high: numberFromMarket(row[indexes.high]),
+      low: numberFromMarket(row[indexes.low]),
+      close: numberFromMarket(row[indexes.close])
+    }))
+    .filter(finiteQuote);
+  return { date, quotes };
+}
+
 export function parseTpexQuotes(rows, fallbackDate) {
   const quotes = (Array.isArray(rows) ? rows : [])
     .map((row) => ({
@@ -254,13 +296,19 @@ export function parseCompanyBasics(rows, exchange) {
         pick(row, ["公司代號", "Code", "SecuritiesCompanyCode"]) ?? ""
       ).trim();
       const industryCode = String(
-        pick(row, ["產業別", "IndustryCode"]) ?? ""
+        pick(row, ["產業別", "IndustryCode", "SecuritiesIndustryCode"]) ?? ""
       ).padStart(2, "0");
       return {
         symbol,
         exchange,
         name: String(
-          pick(row, ["公司簡稱", "公司名稱", "Name", "CompanyName"]) ?? ""
+          pick(row, [
+            "公司簡稱",
+            "公司名稱",
+            "Name",
+            "CompanyAbbreviation",
+            "CompanyName"
+          ]) ?? ""
         ).trim(),
         companyName: String(
           pick(row, ["公司名稱", "CompanyName"]) ?? ""
@@ -268,12 +316,17 @@ export function parseCompanyBasics(rows, exchange) {
         industryCode,
         sector: industryNames[industryCode] ?? `產業別 ${industryCode}`,
         paidInCapital: numberFromMarket(
-          pick(row, ["實收資本額", "PaidInCapital"])
+          pick(row, [
+            "實收資本額",
+            "PaidInCapital",
+            "Paidin.Capital.NTDollars"
+          ])
         ),
         issuedShares: numberFromMarket(
           pick(row, [
             "已發行普通股數或TDR原股發行股數",
-            "IssuedShares"
+            "IssuedShares",
+            "IssueShares"
           ])
         )
       };
@@ -289,12 +342,17 @@ export function parseCompanyBasics(rows, exchange) {
 async function fetchOfficialMarket() {
   let twse;
   try {
-    twse = parseTwseLegacyQuotes(await fetchJson(URLS.twseQuotes));
+    twse = parseTwseMiIndexQuotes(await fetchJson(URLS.twseQuotesCurrent));
   } catch (error) {
-    console.warn(`TWSE legacy fallback: ${error.message}`);
-    twse = parseTwseOpenApiQuotes(
-      await fetchJson(URLS.twseQuotesOpenApi)
-    );
+    console.warn(`TWSE MI_INDEX fallback: ${error.message}`);
+    try {
+      twse = parseTwseLegacyQuotes(await fetchJson(URLS.twseQuotes));
+    } catch (legacyError) {
+      console.warn(`TWSE legacy fallback: ${legacyError.message}`);
+      twse = parseTwseOpenApiQuotes(
+        await fetchJson(URLS.twseQuotesOpenApi)
+      );
+    }
   }
   const [twseBasicsRows, tpexBasicsRows, tpexQuoteRows] = await Promise.all([
     fetchJson(URLS.twseBasics),
@@ -302,12 +360,28 @@ async function fetchOfficialMarket() {
     fetchJson(URLS.tpexQuotes)
   ]);
   const tpex = parseTpexQuotes(tpexQuoteRows, twse.date);
+  if (!twse.quotes.length || !tpex.quotes.length) {
+    throw new Error(
+      `Official quote coverage is incomplete: TWSE ${twse.quotes.length}, TPEx ${tpex.quotes.length}`
+    );
+  }
+  if (twse.date !== tpex.date) {
+    throw new Error(
+      `Official market date mismatch: TWSE ${twse.date}, TPEx ${tpex.date}`
+    );
+  }
+  const basics = [
+    ...parseCompanyBasics(twseBasicsRows, "TWSE"),
+    ...parseCompanyBasics(tpexBasicsRows, "TPEx")
+  ];
+  for (const exchange of ["TWSE", "TPEx"]) {
+    if (!basics.some((company) => company.exchange === exchange)) {
+      throw new Error(`${exchange} company basics are unavailable`);
+    }
+  }
   return {
     date: twse.date,
-    basics: [
-      ...parseCompanyBasics(twseBasicsRows, "TWSE"),
-      ...parseCompanyBasics(tpexBasicsRows, "TPEx")
-    ],
+    basics,
     quotes: [...twse.quotes, ...tpex.quotes]
   };
 }
@@ -565,7 +639,7 @@ async function scanFullMarket(strategy) {
     sources: {
       twseBasics: URLS.twseBasics,
       tpexBasics: URLS.tpexBasics,
-      twseLatest: URLS.twseQuotes,
+      twseLatest: URLS.twseQuotesCurrent,
       tpexLatest: URLS.tpexQuotes,
       history: FUGLE_API_KEY
         ? URLS.fugleHistorical
@@ -609,6 +683,11 @@ async function scanFullMarket(strategy) {
   meta.universeStats.failed = failed;
   if (!analyses.length) {
     throw new Error("No stocks passed the full-market scanner");
+  }
+  for (const exchange of ["TWSE", "TPEx"]) {
+    if (!analyses.some((analysis) => analysis.candidate.exchange === exchange)) {
+      throw new Error(`${exchange} produced no eligible radar candidates`);
+    }
   }
   console.log(
     `${analyses.length} stocks pass capital and 20-day volume filters`

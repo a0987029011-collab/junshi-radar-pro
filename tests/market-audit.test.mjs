@@ -16,6 +16,10 @@ test("radar snapshot has one consistent market date and universe audit", () => {
   assert.ok(marketSnapshotMeta.universeStats.discovered >= verifiedCandidates.length);
   assert.equal(verifiedMarketSymbols.length, verifiedCandidates.length);
   assert.ok(verifiedCandidates.length > 0);
+  assert.deepEqual(
+    new Set(verifiedCandidates.map((candidate) => candidate.exchange)),
+    new Set(["TWSE", "TPEx"])
+  );
 
   for (const candidate of verifiedCandidates) {
     assert.equal(candidate.dataAsOf, marketSnapshotMeta.dataAsOf);
