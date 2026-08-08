@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { importedStocks } from '../lib/stockData';
-import { getScannableSnapshotProfiles } from '../lib/market-data';
+import { verifiedCandidates, getMarketCandles } from '../lib/market-data';
 import { scanStocks } from '../lib/scanEngine';
 
 const marketFilterOptions = ['全部', '上市', '上櫃'] as const;
@@ -21,7 +21,26 @@ export default function ScannerDashboard() {
   const [version, setVersion] = useState(0);
 
   const scanResults = useMemo(() => {
-    const snapshotStocks = getScannableSnapshotProfiles();
+    const snapshotStocks = verifiedCandidates
+      .map((candidate) => {
+        const candles = getMarketCandles(candidate.symbol, 'day', 'adjusted');
+        if (!candles?.length) return null;
+        return {
+          symbol: candidate.symbol,
+          name: candidate.name,
+          market: (candidate.exchange === 'TPEx' ? '上櫃' : '上市') as '上市' | '上櫃',
+          sector: candidate.sector,
+          candles: candles.map((item) => ({
+            date: item.time,
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume
+          }))
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
     const sourceStocks = snapshotStocks.length ? snapshotStocks : importedStocks;
     const results = scanStocks(sourceStocks);
     const filtered =
