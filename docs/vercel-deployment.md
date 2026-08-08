@@ -26,6 +26,26 @@
 - Output Directory: 留空
 - Node Version: `22.x`
 
+## Vercel 匯入流程
+
+1. 登入 Vercel 並點選 **New Project**。
+2. 選擇 GitHub provider，並授權 Vercel 存取你的 repository（若尚未授權）。
+3. 在 repository 列表中選擇 `junshi-radar-pro`，點選 **Import**。
+4. 在設定畫面確認：
+   - Install Command: `pnpm install --frozen-lockfile`
+   - Build Command: `pnpm build`
+   - Output Directory: 留空
+   - Node Version: `22.x`
+   - Framework Preset: Next.js
+5. 啟用自動部署：確保 `main` 分支已啟用自動部署。
+6. 點選 **Deploy**，讓 Vercel 啟動第一次建置。
+
+部署完成後，可在 Vercel Dashboard 檢查最新 deployment 的 build log，以及訪問以下路由驗證：
+
+- `/`
+- `/stocks/[symbol]`
+- `/api/radar`
+
 ## 環境變數
 
 Vercel 部署本身不需要 `FUGLE_API_KEY`，因為每日資料由 GitHub Actions 產生並將 `data/radar-snapshot.json` 提交到 `main`。
