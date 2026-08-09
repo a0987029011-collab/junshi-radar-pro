@@ -1,11 +1,26 @@
-import type { CandlePoint, StockProfile } from './stockData';
+import type { CandlePoint, StockProfile } from './stockData.ts';
+import { calculateMacd } from './indicators.ts';
+import { fitDescendingTrendline } from './scanner-engine.ts';
 
 export interface ScanResultItem extends StockProfile {
   score: number;
+  structureScore: number;
+  structureGrade: 'A級' | 'B級' | '觀察級';
   trend: string;
   reasons: string[];
   latestClose: number;
   latestVolume: number;
+  majorTrendline: boolean;
+  followTrendline: boolean;
+  h3Formed: boolean;
+  h3Index?: number;
+  momentumDecay: boolean;
+  structureState: string;
+  stopLoss?: number;
+}
+
+export function scanStock(stock: StockProfile): ScanResultItem {
+  return scanStocks([stock], 1)[0];
 }
 
 function average(values: number[]) {
@@ -16,12 +31,15 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function sma(values: number[], period: number) {
-  if (values.length < period) {
-    return values[values.length - 1] ?? 0;
+function findSwingLowIndexes(candles: CandlePoint[], radius = 2) {
+  const indexes: number[] = [];
+  for (let index = radius; index < candles.length - radius; index += 1) {
+    const window = candles.slice(index - radius, index + radius + 1);
+    if (candles[index].low === Math.min(...window.map((item) => item.low))) {
+      indexes.push(index);
+    }
   }
-
-  return average(values.slice(-period));
+  return indexes;
 }
 
 function slope(values: number[]) {
@@ -34,62 +52,172 @@ function slope(values: number[]) {
   return (end - start) / Math.max(1, values.length - 1);
 }
 
-function calculateMomentum(candles: CandlePoint[]) {
-  const closes = candles.map((candle) => candle.close);
-  const returns = closes.slice(1).map((close, index) => (close - closes[index]) / closes[index]);
-  const recent = returns.slice(-3);
-  const previous = returns.slice(-6, -3);
+function rangeTolerance(candles: CandlePoint[]) {
+  const highs = candles.map((candle) => candle.high);
+  const lows = candles.map((candle) => candle.low);
+  return Math.max((Math.max(...highs) - Math.min(...lows)) * 0.02, 0.1);
+}
 
-  return average(recent) - average(previous);
+function trendlineCoversCandles(
+  line: { slope: number; intercept: number },
+  candles: CandlePoint[],
+  tolerance: number,
+  useClose = false
+) {
+  return candles.every((candle, index) => {
+    const linePrice = line.intercept + line.slope * index;
+    const value = useClose ? candle.close : candle.high;
+    return value <= linePrice + tolerance;
+  });
+}
+
+function isValidTrendlineWithinAnchorRange(
+  line: { slope: number; intercept: number; touchIndexes: number[] },
+  candles: CandlePoint[],
+  tolerance: number
+) {
+  const lastTouch = line.touchIndexes.at(-1)!;
+  return candles
+    .slice(0, lastTouch + 1)
+    .every((candle, index) => {
+      const linePrice = line.intercept + line.slope * index;
+      return candle.high <= linePrice + tolerance;
+    });
+}
+
+function stoppedMakingNewLows(swingLowIndexes: number[], candles: CandlePoint[]) {
+  if (swingLowIndexes.length < 2) return false;
+
+  const recent = swingLowIndexes
+    .slice(-3)
+    .map((index) => candles[index].low);
+
+  return recent.length >= 2 && recent.at(-1)! >= recent.at(-2)!;
+}
+
+function bearishMomentumDecay(macdHistogram: number[], closes: number[]) {
+  const recent = macdHistogram.filter(Number.isFinite).slice(-3);
+  const hasShrinkingNegative =
+    recent.length >= 3 &&
+    recent.every((value) => value < 0) &&
+    Math.abs(recent[2]) < Math.abs(recent[1]) &&
+    Math.abs(recent[1]) < Math.abs(recent[0]);
+
+  const recentCloses = closes.slice(-8);
+  const slopeValue = slope(recentCloses);
+  const slopeFlattening = slopeValue > -0.008;
+
+  return hasShrinkingNegative && slopeFlattening;
+}
+
+function pickStructuralStopLoss(candles: CandlePoint[]) {
+  const swingLowIndexes = findSwingLowIndexes(candles, 2);
+  if (swingLowIndexes.length >= 1) {
+    return candles[swingLowIndexes.at(-1)!].low;
+  }
+  return Math.min(...candles.slice(-8).map((candle) => candle.low));
 }
 
 export function scanStocks(stocks: StockProfile[], limit = 8): ScanResultItem[] {
   return stocks
     .map((stock) => {
       const closes = stock.candles.map((candle) => candle.close);
-      const lows = stock.candles.map((candle) => candle.low);
-      const volumes = stock.candles.map((candle) => candle.volume);
-      const shortSma = sma(closes, 5);
-      const mediumSma = sma(closes, 20);
-      const longSma = sma(closes, 60);
-      const recentSlope = slope(closes.slice(-8));
-      const momentum = calculateMomentum(stock.candles);
-      const latestClose = closes[closes.length - 1];
-      const latestVolume = volumes[volumes.length - 1];
-      const priorLows = lows.slice(-8, -4);
-      const recentLows = lows.slice(-4);
-      const h3NotNewLow = recentLows[recentLows.length - 1] > Math.min(...priorLows);
-      const volumeDecline = latestVolume < average(volumes.slice(-8)) * 0.88;
-      const priceBelowMediumSma = latestClose < mediumSma;
-      const shortBelowMedium = shortSma < mediumSma;
-      const bigDownTrend = latestClose < mediumSma && mediumSma < longSma && recentSlope < -0.2;
-      const followDownTrend = latestClose < shortSma && shortBelowMedium && recentSlope < -0.06;
-      const bearishMomentumDecay = momentum > -0.01 && momentum > 0;
+      const latestClose = closes.at(-1) ?? 0;
+      const latestVolume = stock.candles.at(-1)?.volume ?? 0;
+      const macd = calculateMacd(closes);
+      const chartTolerance = rangeTolerance(stock.candles);
+      const swingLowIndexes = findSwingLowIndexes(stock.candles, 2);
+      const structuralStopLoss = pickStructuralStopLoss(stock.candles);
+      const largeTrendline = fitDescendingTrendline(stock.candles, 2);
+      const followCandles = stock.candles.slice(Math.max(0, stock.candles.length - 28));
+      const followTrendline = followCandles.length >= 6 ? fitDescendingTrendline(followCandles, 2) : null;
 
       const reasons: string[] = [];
-      let score = 35;
+      let score = 30;
 
-      if (bigDownTrend) {
+      const majorLineValid =
+        largeTrendline &&
+        largeTrendline.slope < 0 &&
+        isValidTrendlineWithinAnchorRange(
+          largeTrendline,
+          stock.candles,
+          chartTolerance
+        );
+
+      if (majorLineValid) {
         reasons.push('大級別下降趨勢線');
-        score += 23;
+        score += 25;
       }
-      if (followDownTrend) {
+
+      const followLineValid =
+        followTrendline &&
+        followTrendline.slope < 0 &&
+        isValidTrendlineWithinAnchorRange(
+          followTrendline,
+          followCandles,
+          chartTolerance * 1.4
+        );
+
+      if (followLineValid) {
         reasons.push('跟隨下降趨勢線');
         score += 20;
       }
-      if (h3NotNewLow) {
+
+      const h3AfterNoNewLow = stoppedMakingNewLows(swingLowIndexes, stock.candles);
+      if (h3AfterNoNewLow) {
         reasons.push('H3 後不再創新低');
         score += 18;
       }
-      if (bearishMomentumDecay) {
+
+      const momentumDecay = bearishMomentumDecay(macd.histogram, closes);
+      const noNewLowAfterStructure = swingLowIndexes.length >= 2 &&
+        stock.candles[swingLowIndexes.at(-1)!].low >= stock.candles[swingLowIndexes.at(-2)!].low;
+
+      let structureScore = 0;
+
+      if (momentumDecay && noNewLowAfterStructure) {
         reasons.push('空方動能衰退');
         score += 18;
+        structureScore += 6;
       }
-      if (priceBelowMediumSma) {
-        score += 6;
+
+      if (h3AfterNoNewLow) {
+        reasons.push('H3 後不再創新低');
+        score += 18;
+        structureScore += 6;
       }
-      if (volumeDecline) {
-        score += 5;
+
+      if (majorLineValid) {
+        structureScore += 4;
+      }
+
+      if (followLineValid) {
+        structureScore += 4;
+      }
+
+      if (majorLineValid && followLineValid) {
+        structureScore += 2;
+      }
+
+      structureScore = Math.min(20, structureScore);
+      const structureGrade:
+        | 'A級'
+        | 'B級'
+        | '觀察級' = structureScore >= 15
+        ? 'A級'
+        : structureScore >= 8
+        ? 'B級'
+        : '觀察級';
+
+      let structureState = '結構破壞';
+      if (majorLineValid && followLineValid) {
+        structureState = '下降趨勢中';
+      } else if (majorLineValid && !followLineValid) {
+        structureState = '下降趨勢壓縮';
+      } else if (momentumDecay) {
+        structureState = '空方動能衰退';
+      } else if (h3AfterNoNewLow) {
+        structureState = 'H3 成形';
       }
 
       if (reasons.length === 0) {
@@ -101,10 +229,19 @@ export function scanStocks(stocks: StockProfile[], limit = 8): ScanResultItem[] 
       return {
         ...stock,
         score: Math.min(100, score),
+        structureScore,
+        structureGrade,
         trend,
         reasons,
         latestClose,
         latestVolume,
+        majorTrendline: Boolean(majorLineValid),
+        followTrendline: Boolean(followLineValid),
+        h3Formed: h3AfterNoNewLow,
+        h3Index: h3AfterNoNewLow ? swingLowIndexes.at(-1) : undefined,
+        momentumDecay,
+        structureState,
+        stopLoss: structuralStopLoss,
       };
     })
     .sort((left, right) => right.score - left.score)
