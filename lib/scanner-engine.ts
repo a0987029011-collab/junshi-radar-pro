@@ -1,12 +1,21 @@
-import type { Candle } from "./types";
-
 export interface Trendline {
   slope: number;
   intercept: number;
   touchIndexes: number[];
 }
 
-export function findSwingHighIndexes(candles: Candle[], radius = 2) {
+import type { CandlePoint } from './stockData.ts';
+
+interface HighSeries {
+  high: number;
+}
+
+interface HistogramSeries {
+  histogram: number;
+  low: number;
+}
+
+export function findSwingHighIndexes(candles: HighSeries[], radius = 2) {
   const indexes: number[] = [];
   for (let index = radius; index < candles.length - radius; index += 1) {
     const window = candles.slice(index - radius, index + radius + 1);
@@ -17,11 +26,11 @@ export function findSwingHighIndexes(candles: Candle[], radius = 2) {
   return indexes;
 }
 
-export function fitDescendingTrendline(
-  candles: Candle[],
+export function fitDescendingTrendline<T extends HighSeries & { low: number }>(
+  candles: CandlePoint[] | T[],
   minimumTouches = 2
 ): Trendline | null {
-  const swingIndexes = findSwingHighIndexes(candles);
+  const swingIndexes = findSwingHighIndexes(candles as HighSeries[]);
   if (swingIndexes.length < minimumTouches) return null;
 
   const priceRange =
@@ -76,7 +85,11 @@ export function fitDescendingTrendline(
   };
 }
 
-export function detectBreakout(candle: Candle, index: number, line: Trendline) {
+export function detectBreakout<T extends { open: number; high: number; close: number }>(
+  candle: T,
+  index: number,
+  line: Trendline
+) {
   const trendlinePrice = line.intercept + line.slope * index;
   return {
     trendlinePrice,
@@ -87,7 +100,7 @@ export function detectBreakout(candle: Candle, index: number, line: Trendline) {
 }
 
 export function findShrinkingHistogramSupport(
-  candles: Candle[],
+  candles: Array<{ histogram: number; low: number }>,
   minimumBarsUnbroken: number
 ) {
   for (
