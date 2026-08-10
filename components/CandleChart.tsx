@@ -484,11 +484,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const offset = Math.floor(localX / (chartWidth / count));
     setInspectedIndex(startIndex + offset);
   };
-
-  useEffect(() => {
-    setVisibleBars(Math.min(DEFAULT_VISIBLE_BARS, candles.length));
+  const resetChartView = () => {
+    setVisibleBars(DEFAULT_VISIBLE_BARS);
     setInspectedIndex(undefined);
-  }, [adjustment, candles.length, timeframe]);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -510,7 +509,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
               aria-selected={timeframe === item.value}
               className={`timeframe-button ${timeframe === item.value ? "active" : ""}`}
               key={item.value}
-              onClick={() => setTimeframe(item.value)}
+              onClick={() => {
+                setTimeframe(item.value);
+                resetChartView();
+              }}
               role="tab"
               type="button"
             >
@@ -523,7 +525,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
             <button
               aria-pressed={adjustment === "adjusted"}
               className={adjustment === "adjusted" ? "active" : ""}
-              onClick={() => setAdjustment("adjusted")}
+              onClick={() => {
+                setAdjustment("adjusted");
+                resetChartView();
+              }}
               type="button"
             >
               還原 K
@@ -531,7 +536,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
             <button
               aria-pressed={adjustment === "raw"}
               className={adjustment === "raw" ? "active" : ""}
-              onClick={() => setAdjustment("raw")}
+              onClick={() => {
+                setAdjustment("raw");
+                resetChartView();
+              }}
               type="button"
             >
               原始 K

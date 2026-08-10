@@ -22,8 +22,13 @@
 # misc
 .DS_Store
 *.pem
+*.pfx
+*.p12
+*.cer
+/.local/
 
 # debug
+/log/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

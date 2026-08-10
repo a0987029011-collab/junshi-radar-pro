@@ -10,11 +10,6 @@ interface HighSeries {
   high: number;
 }
 
-interface HistogramSeries {
-  histogram: number;
-  low: number;
-}
-
 export function findSwingHighIndexes(candles: HighSeries[], radius = 2) {
   const indexes: number[] = [];
   for (let index = radius; index < candles.length - radius; index += 1) {

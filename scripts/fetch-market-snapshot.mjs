@@ -6,6 +6,10 @@ import {
   numberFromMarket,
   sortCandidates
 } from "./lib/strategy-engine.mjs";
+import {
+  fetchTaishinNovaQuotes,
+  hasTaishinNovaConfig
+} from "./lib/taishin-nova.mjs";
 
 const ROOT = process.cwd();
 const STRATEGY_PATH = path.resolve(ROOT, "config/strategy.json");
@@ -339,7 +343,7 @@ export function parseCompanyBasics(rows, exchange) {
     );
 }
 
-async function fetchOfficialMarket() {
+async function fetchOfficialQuotes() {
   let twse;
   try {
     twse = parseTwseMiIndexQuotes(await fetchJson(URLS.twseQuotesCurrent));
@@ -354,11 +358,7 @@ async function fetchOfficialMarket() {
       );
     }
   }
-  const [twseBasicsRows, tpexBasicsRows, tpexQuoteRows] = await Promise.all([
-    fetchJson(URLS.twseBasics),
-    fetchJson(URLS.tpexBasics),
-    fetchJson(URLS.tpexQuotes)
-  ]);
+  const tpexQuoteRows = await fetchJson(URLS.tpexQuotes);
   const tpex = parseTpexQuotes(tpexQuoteRows, twse.date);
   if (!twse.quotes.length || !tpex.quotes.length) {
     throw new Error(
@@ -373,6 +373,38 @@ async function fetchOfficialMarket() {
         `using ${date} history for the delayed exchange`
     );
   }
+  return {
+    date,
+    quoteDates,
+    quotes: [...twse.quotes, ...tpex.quotes],
+    quoteProvider: "official",
+    quoteSource: `${URLS.twseQuotesCurrent} + ${URLS.tpexQuotes}`
+  };
+}
+
+async function fetchLatestMarketQuotes() {
+  const wantsNova = PROVIDER === "auto" || PROVIDER === "taishin-nova";
+  if (wantsNova && hasTaishinNovaConfig()) {
+    try {
+      return await fetchTaishinNovaQuotes();
+    } catch (error) {
+      if (PROVIDER === "taishin-nova") throw error;
+      console.warn(`Taishin Nova fallback: ${error.message}`);
+    }
+  } else if (PROVIDER === "taishin-nova") {
+    throw new Error(
+      "MARKET_DATA_PROVIDER=taishin-nova requires local credentials and certificate"
+    );
+  }
+  return fetchOfficialQuotes();
+}
+
+async function fetchOfficialMarket() {
+  const [latest, twseBasicsRows, tpexBasicsRows] = await Promise.all([
+    fetchLatestMarketQuotes(),
+    fetchJson(URLS.twseBasics),
+    fetchJson(URLS.tpexBasics)
+  ]);
   const basics = [
     ...parseCompanyBasics(twseBasicsRows, "TWSE"),
     ...parseCompanyBasics(tpexBasicsRows, "TPEx")
@@ -383,10 +415,8 @@ async function fetchOfficialMarket() {
     }
   }
   return {
-    date,
-    quoteDates,
+    ...latest,
     basics,
-    quotes: [...twse.quotes, ...tpex.quotes]
   };
 }
 
@@ -506,7 +536,7 @@ export function resolveLatestQuote(rows, quote, dataAsOf, historyProvider) {
   if (quote.date === dataAsOf) {
     return {
       quote,
-      source: `${quote.exchange} official close`
+      source: quote.source ?? `${quote.exchange} official close`
     };
   }
   const latestRow = rows.find((row) => row[0] === dataAsOf);
@@ -638,6 +668,7 @@ async function scanLegacySnapshot(strategy) {
 
 async function scanFullMarket(strategy) {
   const official = await fetchOfficialMarket();
+  const usesTaishinNova = official.quoteProvider === "taishin-nova";
   const quoteByKey = new Map(
     official.quotes.map((quote) => [
       `${quote.exchange}:${quote.symbol}`,
@@ -705,7 +736,9 @@ async function scanFullMarket(strategy) {
     dataAsOf: official.date,
     generatedAt: new Date().toISOString(),
     market: "TWSE+TPEx",
-    mode: Object.values(official.quoteDates).every(
+    mode: usesTaishinNova
+      ? "taishin-nova-full-market-snapshot"
+      : Object.values(official.quoteDates).every(
       (date) => date === official.date
     )
       ? FUGLE_API_KEY
@@ -714,7 +747,9 @@ async function scanFullMarket(strategy) {
       : FUGLE_API_KEY
         ? "licensed-adjusted-history-mixed-close"
         : "delayed-history-mixed-close",
-    provider: Object.values(official.quoteDates).every(
+    provider: usesTaishinNova
+      ? "Taishin Nova full-market snapshot + delayed adjusted history"
+      : Object.values(official.quoteDates).every(
       (date) => date === official.date
     )
       ? FUGLE_API_KEY
@@ -728,6 +763,7 @@ async function scanFullMarket(strategy) {
       tpexBasics: URLS.tpexBasics,
       twseLatest: URLS.twseQuotesCurrent,
       tpexLatest: URLS.tpexQuotes,
+      latestQuotes: official.quoteSource,
       history: FUGLE_API_KEY
         ? URLS.fugleHistorical
         : "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"

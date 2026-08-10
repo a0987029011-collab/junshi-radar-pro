@@ -3,8 +3,8 @@ name: Update Junshi Radar
 on:
   workflow_dispatch:
   schedule:
-    # GitHub Actions schedules use UTC. 13:45 UTC is 21:45 in Taipei.
-    - cron: "45 13 * * 1-5"
+    # GitHub Actions schedules use UTC. 05:45 UTC is 13:45 in Taipei.
+    - cron: "45 5 * * 1-5"
 
 permissions:
   contents: write
