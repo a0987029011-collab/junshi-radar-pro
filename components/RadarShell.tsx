@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { AutoReloadOnDataChange } from "./AutoReloadOnDataChange";
+import { APP_RELEASE_DATE, APP_VERSION } from "../lib/app-version";
 import { marketSnapshotMeta } from "../lib/market-data";
 
 const nav = [
@@ -16,13 +18,30 @@ export function RadarShell({
   children: ReactNode;
   activePath: string;
 }) {
+  const intraday =
+    marketSnapshotMeta.marketPhase === "intraday" ||
+    marketSnapshotMeta.mode.includes("intraday");
   return (
     <div className="app-shell">
+      <AutoReloadOnDataChange
+        initialSnapshotGeneratedAt={marketSnapshotMeta.generatedAt}
+      />
       <header className="topbar">
         <Link className="brand" href="/" aria-label="軍師雷達首頁">
           <span className="brand-mark">軍</span>
           <span>
-            <span className="brand-name">軍師雷達</span>
+            <span className="brand-title-row">
+              <span className="brand-name">軍師雷達</span>
+              <span
+                className="brand-version"
+                title={`版本 ${APP_VERSION}，改版日期 ${APP_RELEASE_DATE}`}
+              >
+                <span className="brand-version-short">
+                  v{APP_VERSION.split(".").slice(0, 2).join(".")} · {APP_RELEASE_DATE.slice(5)}
+                </span>
+                <span className="brand-version-long">v{APP_VERSION} · {APP_RELEASE_DATE}</span>
+              </span>
+            </span>
             <span className="brand-subtitle">TW Market Signal Desk</span>
           </span>
         </Link>
@@ -40,7 +59,12 @@ export function RadarShell({
         </nav>
         <div className="market-state">
           <span className="state-dot" />
-          <span>上市櫃盤後 · {marketSnapshotMeta.dataAsOf.slice(5)}</span>
+          <span>
+            上市櫃{intraday ? "盤中" : "盤後"} · {marketSnapshotMeta.dataAsOf.slice(5)}
+            {intraday && marketSnapshotMeta.quoteTime
+              ? ` ${marketSnapshotMeta.quoteTime.slice(0, 5)}`
+              : ""}
+          </span>
         </div>
       </header>
       <main className="page-wrap">{children}</main>

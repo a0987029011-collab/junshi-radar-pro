@@ -1,0 +1,20 @@
+CREATE TABLE `trendline_corrections` (
+	`id` text PRIMARY KEY NOT NULL,
+	`owner_id` text NOT NULL,
+	`symbol` text NOT NULL,
+	`timeframe` text NOT NULL,
+	`adjustment` text NOT NULL,
+	`h1_date` text NOT NULL,
+	`h1_price` real NOT NULL,
+	`h2_date` text NOT NULL,
+	`h2_price` real NOT NULL,
+	`original_h1_date` text,
+	`original_h1_price` real,
+	`original_h2_date` text,
+	`original_h2_price` real,
+	`reason` text NOT NULL,
+	`notes` text DEFAULT '' NOT NULL,
+	`submitted_for_learning` integer DEFAULT false NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
+);

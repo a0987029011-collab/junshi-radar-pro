@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BREAKOUT_SIGNAL_NAME,
+  getLatestBreakoutLowLine,
+  getNearestActiveBreakoutLowLine,
+  getTrendlineBreakoutLowLine,
   scanH1Trendline,
   scanStock,
   scanStocks,
@@ -183,6 +186,135 @@ test("a red K that opens above the line is classified separately from a body cro
   assert.equal(trace.signals[0].bodyCrossed, false);
   assert.equal(trace.signals[0].gapAboveLine, true);
   assert.equal(trace.signals[0].breakoutType, "gap-above");
+});
+
+test("a confirmed breakout low stays as the defense point while later closes hold above it", () => {
+  const firstConfirmedSignal = {
+    index: 1,
+    closeConfirmation: true,
+    breakoutType: "body-cross",
+  };
+  const laterConfirmedSignal = {
+    index: 3,
+    closeConfirmation: true,
+    breakoutType: "body-cross",
+  };
+
+  assert.deepEqual(
+    getLatestBreakoutLowLine(
+      [
+        { low: 10, close: 11 },
+        { low: 8, close: 9 },
+        { low: 7.9, close: 8.2 },
+        { low: 7.5, close: 8.5 },
+      ],
+      [firstConfirmedSignal, laterConfirmedSignal],
+    ),
+    {
+      signalIndex: 1,
+      endIndex: 3,
+      price: 8,
+      active: true,
+    },
+  );
+});
+
+test("a close below retires the old defense point and the next confirmed breakout starts a new one", () => {
+  const firstConfirmedSignal = {
+    index: 1,
+    closeConfirmation: true,
+    breakoutType: "gap-above",
+  };
+  const nextConfirmedSignal = {
+    index: 4,
+    closeConfirmation: true,
+    breakoutType: "body-cross",
+  };
+
+  assert.deepEqual(
+    getLatestBreakoutLowLine(
+      [
+        { low: 10, close: 11 },
+        { low: 8, close: 9 },
+        { low: 7.5, close: 8 },
+        { low: 7.6, close: 7.9 },
+        { low: 7, close: 8.2 },
+      ],
+      [firstConfirmedSignal, nextConfirmedSignal],
+    ),
+    {
+      signalIndex: 4,
+      endIndex: 4,
+      price: 7,
+      active: true,
+    },
+  );
+});
+
+test("the automatic stop uses the nearest active breakout low below market price", () => {
+  const signals = [
+    { index: 1, closeConfirmation: true, breakoutType: "body-cross" },
+    { index: 3, closeConfirmation: true, breakoutType: "gap-above" },
+  ];
+  const line = getNearestActiveBreakoutLowLine(
+    [
+      { low: 10, close: 11 },
+      { low: 8, close: 9 },
+      { low: 8.2, close: 9.2 },
+      { low: 8.6, close: 9.4 },
+      { low: 8.9, close: 10 },
+    ],
+    signals,
+    10,
+  );
+
+  assert.equal(line.signalIndex, 3);
+  assert.equal(line.price, 8.6);
+});
+
+test("2630 keeps the August 4 breakout low as its current defense point", () => {
+  const candles = getMarketCandles("2630", "day", "adjusted");
+  const trace = scanH1Trendline(
+    candles.map((item) => ({
+      date: item.time,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+    })),
+    {
+      macdHistogram: candles.map((item) => item.histogram),
+      dpo: candles.map((item) => item.dpo),
+    },
+  );
+  const line = getLatestBreakoutLowLine(candles, trace.signals);
+
+  assert.equal(candles[line.signalIndex].time, "2026-08-04");
+  assert.equal(line.price, 47.650001525878906);
+  assert.equal(line.active, true);
+});
+
+test("6505 uses the August 4 red K low for the corrected current trendline", () => {
+  const candles = getMarketCandles("6505", "day", "adjusted");
+  const h1Index = candles.findIndex((item) => item.time === "2026-07-24");
+  const h2Index = candles.findIndex((item) => item.time === "2026-08-03");
+  const correctedLine = {
+    roundId: -1,
+    h1Index,
+    h1Date: candles[h1Index].time,
+    startPrice: candles[h1Index].high,
+    endIndex: h2Index,
+    endDate: candles[h2Index].time,
+    endPrice: candles[h2Index].high,
+    slope:
+      (candles[h2Index].high - candles[h1Index].high) / (h2Index - h1Index),
+  };
+  const line = getTrendlineBreakoutLowLine(candles, correctedLine);
+
+  assert.equal(candles[line.signalIndex].time, "2026-08-04");
+  assert.equal(line.price, 65.4000015258789);
+  assert.equal(line.active, true);
 });
 
 test("one H1-H2 line notifies once while H1 continues with later H2 anchors", () => {

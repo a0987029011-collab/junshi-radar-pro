@@ -1,156 +1,407 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import strategy from "../config/strategy.json";
-import { estimatePosition } from "../lib/risk-calculator";
+import {
+  calculateNetSaleProceeds,
+  DEFAULT_COMMISSION_DISCOUNT,
+  summarizePositionTransactions,
+  type PositionTransaction
+} from "../lib/position-transactions";
 import type { Classification } from "../lib/types";
 import { ClassificationBadge } from "./StockUI";
 
-interface PositionDraft {
-  symbol: string;
-  name: string;
-  shares: number;
-  entryPrice: number;
-  currentPrice: number;
-  stopPrice: number;
-  targetPrice: number;
+const DEFAULT_OCCURRED_AT = "2026-08-11T05:30:00.000Z";
+const BROKER_DISCOUNT_OPTIONS = [
+  { value: 0.1, label: "一折" },
+  { value: 0.2, label: "二折" },
+  { value: 0.3, label: "三折" },
+  { value: 0.5, label: "五折" },
+  { value: 0.6, label: "六折" },
+  { value: 1, label: "不打折" }
+];
+
+function formatPrice(value: number) {
+  return value.toLocaleString("zh-TW", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("zh-TW", {
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
 }
 
 export function PositionManager({
+  symbol,
+  name,
   currentPrice,
-  targetPrice,
-  classification
+  stopPrice,
+  stopSourceDate,
+  classification,
+  defaultLot
 }: {
+  symbol: string;
+  name: string;
   currentPrice: number;
-  targetPrice: number;
+  stopPrice: number | null;
+  stopSourceDate: string;
   classification: Classification;
+  defaultLot?: { shares: number; price: number; occurredAt?: string };
 }) {
-  const defaultPosition: PositionDraft = {
-    symbol: "2615",
-    name: "萬海",
-    shares: 352,
-    entryPrice: 85.3,
-    currentPrice,
-    stopPrice: 82,
-    targetPrice
-  };
-  const [draft, setDraft] = useState<PositionDraft>(defaultPosition);
+  const [fallbackLot, setFallbackLot] = useState<PositionTransaction | null>(
+    defaultLot
+      ? {
+          id: `legacy-${symbol}`,
+          symbol,
+          name,
+          kind: "buy",
+          shares: defaultLot.shares,
+          price: defaultLot.price,
+          occurredAt: defaultLot.occurredAt ?? DEFAULT_OCCURRED_AT,
+          createdAt: defaultLot.occurredAt ?? DEFAULT_OCCURRED_AT
+        }
+      : null
+  );
+  const [transactions, setTransactions] = useState<PositionTransaction[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [newShares, setNewShares] = useState("100");
+  const [newPrice, setNewPrice] = useState(currentPrice.toFixed(2));
+  const [sellShares, setSellShares] = useState(
+    String(defaultLot?.shares ?? 100)
+  );
+  const [sellPrice, setSellPrice] = useState(currentPrice.toFixed(2));
+  const [commissionDiscount, setCommissionDiscount] = useState(
+    DEFAULT_COMMISSION_DISCOUNT
+  );
+  const apiUrl = `/api/positions?symbol=${encodeURIComponent(symbol)}`;
 
   useEffect(() => {
-    const saved = localStorage.getItem("junshi-position-2615");
+    const savedDiscount = Number(
+      localStorage.getItem("junshi-broker-commission-discount")
+    );
+    const effectiveDiscount =
+      Number.isFinite(savedDiscount) && savedDiscount > 0 && savedDiscount <= 1
+        ? savedDiscount
+        : DEFAULT_COMMISSION_DISCOUNT;
+    // Device-local broker preference is applied to new transaction records.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCommissionDiscount(effectiveDiscount);
+    const legacyKey = `junshi-position-${symbol}`;
+    const saved = symbol === "2615" ? localStorage.getItem(legacyKey) : null;
     if (saved) {
-      // Device-local data can only be hydrated after the component mounts.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDraft({
-        ...JSON.parse(saved),
-        currentPrice,
-        targetPrice
-      });
+      try {
+        const legacy = JSON.parse(saved) as {
+          shares?: number;
+          entryPrice?: number;
+        };
+        if (
+          Number.isFinite(legacy.shares) &&
+          Number(legacy.shares) > 0 &&
+          Number.isFinite(legacy.entryPrice) &&
+          Number(legacy.entryPrice) > 0
+        ) {
+          // Import the former device-only draft until the first server save.
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setFallbackLot((current) =>
+            current
+              ? {
+                  ...current,
+                  shares: Number(legacy.shares),
+                  price: Number(legacy.entryPrice)
+                }
+              : current
+          );
+        }
+      } catch {
+        localStorage.removeItem(legacyKey);
+      }
     }
-  }, [currentPrice, targetPrice]);
 
-  const result = useMemo(
+    let cancelled = false;
+    fetch(apiUrl, { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as {
+          transactions?: PositionTransaction[];
+          error?: string;
+        };
+        if (!response.ok) throw new Error(body.error ?? "持股紀錄讀取失敗");
+        if (!cancelled) {
+          const nextTransactions = body.transactions ?? [];
+          setTransactions(nextTransactions);
+          const nextSummary = summarizePositionTransactions(
+            nextTransactions,
+            effectiveDiscount
+          );
+          if (nextSummary.totalShares > 0) {
+            setSellShares(String(nextSummary.totalShares));
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setFeedback(error instanceof Error ? error.message : "持股紀錄讀取失敗");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiUrl, symbol]);
+
+  const effectiveTransactions = useMemo(
     () =>
-      estimatePosition(
-        {
-          shares: Number(draft.shares),
-          entryPrice: Number(draft.entryPrice),
-          currentPrice: Number(draft.currentPrice),
-          stopPrice: Number(draft.stopPrice),
-          targetPrice: Number(draft.targetPrice)
-        },
-        strategy.risk
-      ),
-    [draft]
+      transactions.length > 0
+        ? transactions
+        : fallbackLot
+          ? [fallbackLot]
+          : [],
+    [fallbackLot, transactions]
   );
+  const summary = useMemo(
+    () => summarizePositionTransactions(effectiveTransactions, commissionDiscount),
+    [commissionDiscount, effectiveTransactions]
+  );
+  const serverSummary = useMemo(
+    () => summarizePositionTransactions(transactions, commissionDiscount),
+    [commissionDiscount, transactions]
+  );
+  const currentNetProceeds = calculateNetSaleProceeds(
+    summary.totalShares,
+    currentPrice,
+    commissionDiscount
+  );
+  const unrealizedPercent =
+    summary.totalCostWithFees > 0
+      ? ((currentNetProceeds - summary.totalCostWithFees) /
+          summary.totalCostWithFees) *
+        100
+      : 0;
 
-  function update(key: keyof PositionDraft, value: string) {
-    setDraft((current) => ({
-      ...current,
-      [key]: key === "symbol" || key === "name" ? value : Number(value)
-    }));
+  async function postPosition(body: Record<string, unknown>) {
+    const response = await fetch("/api/positions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = (await response.json()) as {
+      transactions?: PositionTransaction[];
+      error?: string;
+    };
+    if (!response.ok) throw new Error(data.error ?? "持股紀錄儲存失敗");
+    return data.transactions ?? [];
   }
 
-  function save() {
-    localStorage.setItem("junshi-position-2615", JSON.stringify(draft));
+  async function ensureExistingPositionSaved() {
+    if (
+      transactions.length > 0 ||
+      summary.totalShares <= 0 ||
+      !fallbackLot
+    ) return transactions;
+    const saved = await postPosition({
+      action: "buy",
+      symbol: fallbackLot.symbol,
+      name: fallbackLot.name,
+      shares: fallbackLot.shares,
+      price: fallbackLot.price,
+      commissionDiscount,
+      occurredAt: fallbackLot.occurredAt
+    });
+    localStorage.removeItem(`junshi-position-${symbol}`);
+    return saved;
+  }
+
+  async function addLot() {
+    setBusy(true);
+    setFeedback("");
+    try {
+      await ensureExistingPositionSaved();
+      const next = await postPosition({
+        action: "buy",
+        symbol,
+        name,
+        shares: Number(newShares),
+        price: Number(newPrice),
+        commissionDiscount,
+        occurredAt: new Date().toISOString()
+      });
+      setTransactions(next);
+      setSellShares(
+        String(
+          summarizePositionTransactions(next, commissionDiscount).totalShares
+        )
+      );
+      setNewShares("100");
+      setNewPrice(currentPrice.toFixed(2));
+      setFeedback("已新增一批進場，平均進場價已重新計算。 ");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "新增進場失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sell(shares: number, sellEverything: boolean) {
+    setBusy(true);
+    setFeedback("");
+    try {
+      await ensureExistingPositionSaved();
+      const next = await postPosition({
+        action: "sell",
+        symbol,
+        name,
+        shares,
+        price: Number(sellPrice),
+        commissionDiscount,
+        occurredAt: new Date().toISOString()
+      });
+      setTransactions(next);
+      const remainingShares = summarizePositionTransactions(
+        next,
+        commissionDiscount
+      ).totalShares;
+      setSellShares(String(remainingShares || 1));
+      setFeedback(
+        sellEverything
+          ? "已全部賣出，成交與費稅後損益已存入交易歷史。"
+          : `已分批賣出 ${shares.toLocaleString("zh-TW")} 股，剩餘 ${remainingShares.toLocaleString("zh-TW")} 股。`
+      );
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "賣出紀錄失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasOpenPosition =
+    transactions.length === 0 ? summary.totalShares > 0 : serverSummary.totalShares > 0;
+
+  function updateCommissionDiscount(value: number) {
+    setCommissionDiscount(value);
+    localStorage.setItem(
+      "junshi-broker-commission-discount",
+      String(value)
+    );
   }
 
   return (
-    <section className="panel info-card">
+    <section className="panel info-card position-manager">
       <div className="section-head">
         <div>
-          <h2>{draft.name} {draft.symbol}</h2>
-          <p>前一根關鍵 K 低點作為結構停損</p>
+          <h2>{name} {symbol}</h2>
+          <p>分批進場自動計算均價，停損跟隨最近有效防守線</p>
         </div>
         <ClassificationBadge classification={classification} />
       </div>
-      <div className="form-grid">
-        <div className="form-field">
-          <label htmlFor="shares">股數</label>
-          <input id="shares" min="1" onChange={(e) => update("shares", e.target.value)} type="number" value={draft.shares} />
-        </div>
-        <div className="form-field">
-          <label htmlFor="entry">平均進場價</label>
-          <input id="entry" min="0" onChange={(e) => update("entryPrice", e.target.value)} step="0.05" type="number" value={draft.entryPrice} />
-        </div>
-        <div className="form-field">
-          <label htmlFor="current">目前價格（手動）</label>
-          <input id="current" min="0" onChange={(e) => update("currentPrice", e.target.value)} step="0.05" type="number" value={draft.currentPrice} />
-        </div>
-        <div className="form-field">
-          <label htmlFor="stop">停損價</label>
-          <input id="stop" min="0" onChange={(e) => update("stopPrice", e.target.value)} step="0.05" type="number" value={draft.stopPrice} />
-        </div>
-        <div className="form-field">
-          <label htmlFor="target">第一目標價</label>
-          <input id="target" min="0" onChange={(e) => update("targetPrice", e.target.value)} step="0.05" type="number" value={draft.targetPrice} />
-        </div>
+
+      <div className="position-summary-card" aria-label="持股摘要">
+        <div><span>股數</span><strong>{summary.totalShares.toLocaleString("zh-TW")}</strong></div>
+        <div><span>平均進場價</span><strong>{summary.averageEntryPrice > 0 ? formatPrice(summary.averageEntryPrice) : "—"}</strong></div>
+        <div><span>目前價格</span><strong>{formatPrice(currentPrice)}</strong></div>
+        <div><span>自動停損價</span><strong>{stopPrice === null ? "—" : formatPrice(stopPrice)}</strong></div>
+        <div className="position-total-cost"><span>持股總成本（含手續費）</span><strong>{summary.totalShares > 0 ? `$${formatPrice(summary.totalCostWithFees)}` : "—"}</strong></div>
       </div>
-      <div className="risk-result-grid">
-        <div className="result-card">
-          <span>投入成本</span>
-          <strong>{Math.round(result.entryCost).toLocaleString("zh-TW")} 元</strong>
-        </div>
-        <div className="result-card">
-          <span>浮動損益（估）</span>
-          <strong className={result.unrealizedPnl >= 0 ? "positive" : "negative"}>
-            {result.unrealizedPnl >= 0 ? "+" : ""}
-            {Math.round(result.unrealizedPnl).toLocaleString("zh-TW")} 元
-          </strong>
-        </div>
-        <div className="result-card">
-          <span>停損損失（含稅費）</span>
-          <strong>{Math.round(result.estimatedLossAtStop).toLocaleString("zh-TW")} 元</strong>
-        </div>
-        <div className="result-card">
-          <span>淨風險報酬比</span>
-          <strong>{result.riskReward.toFixed(2)}</strong>
-        </div>
-        <div className="result-card">
-          <span>剩餘虧損額度</span>
-          <strong>{Math.round(result.remainingLossBudget).toLocaleString("zh-TW")} 元</strong>
-        </div>
-        <div className="result-card">
-          <span>單筆上限檢查</span>
-          <strong className={result.withinLossLimit ? "positive" : "negative"}>
-            {result.withinLossLimit ? "通過" : "超標"}
-          </strong>
-        </div>
+      <div className="position-stop-note">
+        {stopPrice === null
+          ? "防守依據：目前沒有仍有效的突破水平線"
+          : `防守依據：${stopSourceDate} 目前圖上趨勢線的突破紅 K 最低價`}
       </div>
+
+      <div className="broker-discount-setting">
+        <div>
+          <strong>券商手續費折扣</strong>
+          <span>損益已計入買賣手續費與賣出證交稅</span>
+        </div>
+        <label>
+          <span>選擇折扣</span>
+          <select
+            aria-label="券商手續費折扣"
+            onChange={(event) => updateCommissionDiscount(Number(event.target.value))}
+            value={commissionDiscount}
+          >
+            {BROKER_DISCOUNT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="position-performance">
+        <span>預估浮動損益率（含費稅）</span>
+        <strong className={unrealizedPercent >= 0 ? "positive" : "negative"}>
+          {unrealizedPercent >= 0 ? "+" : ""}{unrealizedPercent.toFixed(2)}%
+        </strong>
+      </div>
+
+      <section className="position-action-card">
+        <div className="position-action-head">
+          <div><strong>分批進場</strong><span>每一批股數與成交價都會保留</span></div>
+          <em>自動均價</em>
+        </div>
+        <div className="position-entry-row">
+          <label>
+            <span>新增股數</span>
+            <input aria-label="新增股數" min="1" onChange={(event) => setNewShares(event.target.value)} step="1" type="number" value={newShares} />
+          </label>
+          <label>
+            <span>買進價</span>
+            <input aria-label="買進價" min="0.01" onChange={(event) => setNewPrice(event.target.value)} step="0.05" type="number" value={newPrice} />
+          </label>
+          <button className="primary-button" disabled={busy} onClick={addLot} type="button">＋ 新增一批</button>
+        </div>
+        <div className="position-lot-list">
+          {summary.activeBuys.map((transaction, index) => (
+            <div className="position-lot-row" key={transaction.id}>
+              <span>第 {index + 1} 批 · {formatDate(transaction.occurredAt)}</span>
+              <strong>{transaction.shares.toLocaleString("zh-TW")} 股 × {formatPrice(transaction.price)}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="position-action-card position-sell-card">
+        <div className="position-action-head">
+          <div><strong>賣出紀錄</strong><span>可分批賣出，也可一次全部賣出</span></div>
+        </div>
+        <div className="position-sell-row">
+          <label>
+            <span>賣出股數</span>
+            <input aria-label="賣出股數" max={summary.totalShares || undefined} min="1" onChange={(event) => setSellShares(event.target.value)} step="1" type="number" value={sellShares} />
+          </label>
+          <label>
+            <span>實際賣出價</span>
+            <input aria-label="實際賣出價" min="0.01" onChange={(event) => setSellPrice(event.target.value)} step="0.05" type="number" value={sellPrice} />
+          </label>
+          <div className="position-sell-actions">
+            <button className="position-sell-button" disabled={busy || !hasOpenPosition} onClick={() => sell(Number(sellShares), false)} type="button">分批賣出</button>
+            <button className="position-sell-button sell-all" disabled={busy || !hasOpenPosition} onClick={() => sell(summary.totalShares, true)} type="button">全部賣出</button>
+          </div>
+        </div>
+      </section>
+
+      {summary.saleHistory.length > 0 ? (
+        <section className="position-history">
+          <strong>最近賣出歷史</strong>
+          {summary.saleHistory.slice(-3).reverse().map(({ transaction, returnPercent }) => (
+            <div key={transaction.id}>
+              <span>{formatDate(transaction.occurredAt)} · {transaction.shares.toLocaleString("zh-TW")} 股 · {formatPrice(transaction.price)} 元</span>
+              <em className={returnPercent >= 0 ? "positive" : "negative"}>{returnPercent >= 0 ? "+" : ""}{returnPercent.toFixed(2)}%</em>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
+      {!loaded ? <div className="position-feedback">正在讀取持股歷史…</div> : null}
+      {feedback ? <div className="position-feedback" role="status">{feedback}</div> : null}
       <div className="notice">
-        已納入 3 折手續費、最低手續費與股票賣出證交稅。實際費率仍以券商成交回報為準。
-      </div>
-      <div className="button-row">
-        <button className="primary-button" onClick={save} type="button">
-          儲存在此裝置
-        </button>
-        <button
-          className="secondary-button"
-          onClick={() => setDraft(defaultPosition)}
-          type="button"
-        >
-          還原萬海案例
-        </button>
+        買進與賣出成交會保存為歷史資料，供後續檢查分批進場、停損與實際報酬。
       </div>
     </section>
   );

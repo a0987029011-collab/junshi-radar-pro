@@ -1,0 +1,1 @@
+ALTER TABLE `position_transactions` ADD `commission_discount` real;

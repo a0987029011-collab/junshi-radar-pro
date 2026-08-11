@@ -5,17 +5,28 @@ import { DPO_PERIOD } from "../lib/indicators.ts";
 import {
   getMarketCandles,
   getMarketDataNote,
+  marketSnapshotMeta,
   type PriceAdjustment
 } from "../lib/market-data";
 import {
   BREAKOUT_SIGNAL_NAME,
   BREAKOUT_TYPE_LABELS,
+  getLatestBreakoutLowLine,
+  getTrendlineBreakoutLowLine,
   priceOnTrackingLine,
   scanH1Trendline,
+  type BreakoutLowLine,
   type H1TrendlineScan,
   type TrackingLineSegment
 } from "../lib/scanEngine";
 import type { Candle, Timeframe } from "../lib/types";
+import { getSystemDisplayTrendline } from "../lib/trendline-display";
+import {
+  trendlineCorrectionReasons,
+  type TrendlineCorrection,
+  type TrendlineCorrectionInput,
+  type TrendlineCorrectionReason
+} from "../lib/trendline-corrections";
 
 const timeframeLabels: { value: Timeframe; label: string }[] = [
   { value: "day", label: "日 K" },
@@ -25,6 +36,8 @@ const timeframeLabels: { value: Timeframe; label: string }[] = [
 
 const DEFAULT_VISIBLE_BARS = 180;
 const MIN_VISIBLE_BARS = 30;
+const getProjectionBarCount = (visibleCount: number) =>
+  Math.min(12, Math.max(6, Math.round(visibleCount * 0.08)));
 const priceFormatter = new Intl.NumberFormat("zh-TW", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
@@ -34,12 +47,39 @@ function formatPrice(value: number) {
   return priceFormatter.format(value);
 }
 
+type EditableTrendline = {
+  h1Index: number;
+  h2Index: number;
+  reason: TrendlineCorrectionReason | "";
+  notes: string;
+  submittedForLearning: boolean;
+};
+
+function lineFromEditable(candles: Candle[], editable?: EditableTrendline) {
+  if (!editable) return undefined;
+  const h1 = candles[editable.h1Index];
+  const h2 = candles[editable.h2Index];
+  if (!h1 || !h2 || editable.h2Index <= editable.h1Index) return undefined;
+  return {
+    roundId: -1,
+    h1Index: editable.h1Index,
+    h1Date: h1.time,
+    startPrice: h1.high,
+    endIndex: editable.h2Index,
+    endDate: h2.time,
+    endPrice: h2.high,
+    slope: (h2.high - h1.high) / (editable.h2Index - editable.h1Index)
+  } satisfies TrackingLineSegment;
+}
+
 function drawChart(
   canvas: HTMLCanvasElement,
   candles: Candle[],
   trace: H1TrendlineScan,
   requestedVisibleBars: number,
-  inspectedIndex?: number
+  inspectedIndex?: number,
+  manualLine?: TrackingLineSegment,
+  intradaySnapshot = false
 ) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -67,13 +107,42 @@ function drawChart(
   const viewStart = candles.length - visibleCount;
   const viewEnd = candles.length - 1;
   const visibleCandles = candles.slice(viewStart);
+  const historicalBreakoutLowLine = getLatestBreakoutLowLine(candles, trace.signals);
+  const supportTrendline = manualLine ?? getSystemDisplayTrendline(trace).line;
+  const currentBreakoutLowLine = supportTrendline
+    ? getTrendlineBreakoutLowLine(candles, supportTrendline)
+    : undefined;
+  const sameSupportLine =
+    historicalBreakoutLowLine !== undefined &&
+    currentBreakoutLowLine !== undefined &&
+    historicalBreakoutLowLine.signalIndex === currentBreakoutLowLine.signalIndex &&
+    historicalBreakoutLowLine.price === currentBreakoutLowLine.price;
+  const breakoutLowLines: Array<{
+    line: BreakoutLowLine;
+    current: boolean;
+  }> = [];
+  if (historicalBreakoutLowLine && !sameSupportLine) {
+    breakoutLowLines.push({ line: historicalBreakoutLowLine, current: false });
+  }
+  if (currentBreakoutLowLine) {
+    breakoutLowLines.push({ line: currentBreakoutLowLine, current: true });
+  } else if (historicalBreakoutLowLine) {
+    breakoutLowLines.push({ line: historicalBreakoutLowLine, current: true });
+  }
+  const visibleBreakoutLowLines = breakoutLowLines.filter(
+    ({ line }) => line.endIndex >= viewStart && line.signalIndex <= viewEnd
+  );
   const highs = visibleCandles.map((candle) => candle.high);
-  const lows = visibleCandles.map((candle) => candle.low);
+  const lows = [
+    ...visibleCandles.map((candle) => candle.low),
+    ...visibleBreakoutLowLines.map(({ line }) => line.price)
+  ];
   const range = Math.max(...highs) - Math.min(...lows) || 1;
   const maxPrice = Math.max(...highs) + range * 0.06;
   const minPrice = Math.min(...lows) - range * 0.04;
   const maxVolume = Math.max(1, ...visibleCandles.map((candle) => candle.volume));
-  const xStep = chartWidth / visibleCount;
+  const projectionBarCount = getProjectionBarCount(visibleCount);
+  const xStep = chartWidth / (visibleCount + projectionBarCount);
   const candleWidth = Math.max(1.5, xStep * 0.58);
   const toX = (index: number) =>
     pad.left + xStep * (index - viewStart) + xStep / 2;
@@ -130,6 +199,37 @@ function drawChart(
     ctx.globalAlpha = 1;
   });
 
+  visibleBreakoutLowLines.forEach(({ line, current }) => {
+    const startIndex = Math.max(line.signalIndex, viewStart);
+    const clippedEndIndex = Math.min(line.endIndex, viewEnd);
+    const y = toPriceY(line.price);
+    const startX =
+      line.signalIndex < viewStart ? pad.left : toX(startIndex);
+    const endX = line.active
+      ? width - pad.right
+      : toX(clippedEndIndex);
+
+    ctx.save();
+    ctx.globalAlpha = current ? 0.98 : 0.48;
+    ctx.strokeStyle = current ? "#ffd166" : "#ff9aa1";
+    ctx.fillStyle = current ? "#ffe29a" : "#ffb7bd";
+    ctx.lineWidth = current ? 2 : 1.25;
+    ctx.setLineDash(current ? [8, 4] : [3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(startX, y);
+    ctx.lineTo(endX, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillText(
+      `${current ? "目前" : "過往"}防守 ${formatPrice(line.price)}`,
+      line.active
+        ? Math.max(pad.left, endX - 112)
+        : Math.min(width - pad.right - 48, endX + 6),
+      Math.max(12, y - 5)
+    );
+    ctx.restore();
+  });
+
   const drawLine = (
     line: TrackingLineSegment,
     endIndex: number,
@@ -163,34 +263,24 @@ function drawChart(
     ctx.globalAlpha = 1;
   };
 
-  const latestSignal = [...trace.signals].reverse().find((signal) =>
-    trace.lineSegments.some(
-      (line) =>
-        line.roundId === signal.roundId &&
-        line.endIndex === signal.sourceEndIndex &&
-        line.slope < 0
-    )
-  );
-  const latestSignalH1 = latestSignal
-    ? trace.h1Points.find((h1) => h1.roundId === latestSignal.roundId)
-    : undefined;
-  const latestSignalLine = latestSignal
-    ? trace.lineSegments.find(
-        (line) =>
-          line.roundId === latestSignal.roundId &&
-          line.endIndex === latestSignal.sourceEndIndex
-      )
-    : undefined;
-  const displayedH1 = latestSignalH1 ?? trace.activeH1;
-  const displayedLine = latestSignalLine ?? (!latestSignal ? trace.currentLine : undefined);
+  const {
+    h1: displayedH1,
+    latestSignal,
+    line: displayedLine
+  } = getSystemDisplayTrendline(trace);
 
   if (displayedLine && displayedLine.slope < 0) {
     drawLine(
       displayedLine,
       latestSignal?.index ?? displayedLine.endIndex,
       "#77a7ff",
-      0.95
+      manualLine ? 0.58 : 0.95,
+      Boolean(manualLine)
     );
+  }
+
+  if (manualLine && manualLine.slope < 0) {
+    drawLine(manualLine, viewEnd, "#d894ff", 0.98);
   }
 
   if (
@@ -200,6 +290,7 @@ function drawChart(
   ) {
     const x = toX(displayedH1.index);
     const y = toPriceY(displayedH1.price);
+    ctx.globalAlpha = manualLine ? 0.58 : 1;
     ctx.fillStyle = "#f6bd4b";
     ctx.strokeStyle = "#090e13";
     ctx.lineWidth = 1.5;
@@ -208,7 +299,8 @@ function drawChart(
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#f6bd4b";
-    ctx.fillText("H1", x + 6, Math.max(12, y - 7));
+    ctx.fillText(manualLine ? "原 H1" : "H1", x + 6, Math.max(12, y - 7));
+    ctx.globalAlpha = 1;
   }
 
   if (
@@ -218,6 +310,7 @@ function drawChart(
   ) {
     const x = toX(displayedLine.endIndex);
     const y = toPriceY(displayedLine.endPrice);
+    ctx.globalAlpha = manualLine ? 0.58 : 1;
     ctx.fillStyle = "#63d8ee";
     ctx.strokeStyle = "#090e13";
     ctx.lineWidth = 1.5;
@@ -226,7 +319,32 @@ function drawChart(
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#63d8ee";
-    ctx.fillText("H2", x - 18, Math.max(12, y - 7));
+    ctx.fillText(manualLine ? "原 H2" : "H2", x - 28, Math.max(12, y - 7));
+    ctx.globalAlpha = 1;
+  }
+
+  if (manualLine) {
+    const drawManualAnchor = (
+      index: number,
+      price: number,
+      label: string,
+      labelOffset: number
+    ) => {
+      if (index < viewStart || index > viewEnd) return;
+      const x = toX(index);
+      const y = toPriceY(price);
+      ctx.fillStyle = "#d894ff";
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#efd2ff";
+      ctx.fillText(label, x + labelOffset, Math.max(12, y - 8));
+    };
+    drawManualAnchor(manualLine.h1Index, manualLine.startPrice, "校正 H1", 8);
+    drawManualAnchor(manualLine.endIndex, manualLine.endPrice, "校正 H2", -48);
   }
 
   if (
@@ -254,7 +372,7 @@ function drawChart(
   }
 
   const latestEvaluation = trace.latestEvaluation;
-  if (latestEvaluation?.index === candles.length - 1) {
+  if (!manualLine && latestEvaluation?.index === candles.length - 1) {
     const y = toPriceY(latestEvaluation.linePrice);
     ctx.fillStyle = "#63d8ee";
     ctx.beginPath();
@@ -387,13 +505,7 @@ function drawChart(
     inspectedIndex >= viewStart &&
     inspectedIndex <= viewEnd
   ) {
-    const inspectedCandle = candles[inspectedIndex];
     const x = toX(inspectedIndex);
-    const labelLines = [
-      inspectedCandle.time,
-      `最高 ${formatPrice(inspectedCandle.high)}　最低 ${formatPrice(inspectedCandle.low)}`,
-      `開盤 ${formatPrice(inspectedCandle.open)}　收盤 ${formatPrice(inspectedCandle.close)}`
-    ];
     ctx.save();
     ctx.setLineDash([3, 4]);
     ctx.strokeStyle = "rgba(99, 216, 238, .72)";
@@ -402,35 +514,26 @@ function drawChart(
     ctx.moveTo(x, pad.top);
     ctx.lineTo(x, height - pad.bottom);
     ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font = "bold 11px Consolas, monospace";
-    const labelWidth =
-      Math.max(...labelLines.map((line) => ctx.measureText(line).width)) + 16;
-    const labelHeight = 58;
-    const labelX = Math.max(
-      pad.left,
-      Math.min(width - pad.right - labelWidth, x - labelWidth / 2)
-    );
-    ctx.fillStyle = "rgba(13, 18, 24, .96)";
-    ctx.fillRect(labelX, pad.top + 4, labelWidth, labelHeight);
-    ctx.strokeStyle = "#63d8ee";
-    ctx.strokeRect(labelX, pad.top + 4, labelWidth, labelHeight);
-    ctx.fillStyle = "#d8f8ff";
-    ctx.fillText(labelLines[0], labelX + 8, pad.top + 20);
-    ctx.font = "10px Consolas, monospace";
-    ctx.fillStyle = "#f2f6fa";
-    ctx.fillText(labelLines[1], labelX + 8, pad.top + 37);
-    ctx.fillText(labelLines[2], labelX + 8, pad.top + 52);
     ctx.restore();
   }
 }
 
 export function CandleChart({ symbol }: { symbol: string }) {
+  const intradaySnapshot =
+    marketSnapshotMeta.marketPhase === "intraday" ||
+    marketSnapshotMeta.mode.includes("intraday");
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
   const [adjustment, setAdjustment] = useState<PriceAdjustment>("adjusted");
   const [visibleBars, setVisibleBars] = useState(DEFAULT_VISIBLE_BARS);
   const [inspectedIndex, setInspectedIndex] = useState<number>();
+  const [correction, setCorrection] = useState<TrendlineCorrection | null>(null);
+  const [correctionLoading, setCorrectionLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<EditableTrendline>();
+  const [feedback, setFeedback] = useState("");
+  const [saving, setSaving] = useState(false);
   const inspectingRef = useRef(false);
+  const draggingAnchorRef = useRef<"h1" | "h2" | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const candles = useMemo(
     () => getMarketCandles(symbol, timeframe, adjustment) ?? [],
@@ -453,11 +556,65 @@ export function CandleChart({ symbol }: { symbol: string }) {
     ),
     [candles]
   );
+  const historicalBreakoutLowLine = useMemo(
+    () => getLatestBreakoutLowLine(candles, trace.signals),
+    [candles, trace]
+  );
+  const systemTrendline = useMemo(() => getSystemDisplayTrendline(trace), [trace]);
+  const visibleCorrection =
+    correction?.symbol === symbol &&
+    correction.timeframe === timeframe &&
+    correction.adjustment === adjustment
+      ? correction
+      : null;
+  const correctionEditable = useMemo<EditableTrendline | undefined>(() => {
+    if (!visibleCorrection) return undefined;
+    const h1Index = candles.findIndex((candle) => candle.time === visibleCorrection.h1.date);
+    const h2Index = candles.findIndex((candle) => candle.time === visibleCorrection.h2.date);
+    if (h1Index < 0 || h2Index <= h1Index) return undefined;
+    return {
+      h1Index,
+      h2Index,
+      reason: visibleCorrection.reason,
+      notes: visibleCorrection.notes,
+      submittedForLearning: visibleCorrection.submittedForLearning
+    };
+  }, [candles, visibleCorrection]);
+  const activeEditable = editing ? draft : correctionEditable;
+  const manualLine = useMemo(
+    () => lineFromEditable(candles, activeEditable),
+    [activeEditable, candles]
+  );
+  const currentBreakoutLowLine = useMemo(() => {
+    const displayedTrendline = manualLine ?? systemTrendline.line;
+    return displayedTrendline
+      ? getTrendlineBreakoutLowLine(candles, displayedTrendline)
+      : undefined;
+  }, [candles, manualLine, systemTrendline]);
+  const currentSupportLine =
+    (currentBreakoutLowLine?.active ? currentBreakoutLowLine : undefined) ??
+    historicalBreakoutLowLine;
+  const historicalSupportLine =
+    historicalBreakoutLowLine &&
+    currentBreakoutLowLine &&
+    (historicalBreakoutLowLine.signalIndex !== currentBreakoutLowLine.signalIndex ||
+      historicalBreakoutLowLine.price !== currentBreakoutLowLine.price)
+      ? historicalBreakoutLowLine
+      : undefined;
   const dataNote = getMarketDataNote(symbol);
   const visibleBarCount = Math.min(visibleBars, candles.length);
   const minimumVisibleBars = Math.min(MIN_VISIBLE_BARS, candles.length);
   const inspectedCandle =
     inspectedIndex === undefined ? undefined : candles[inspectedIndex];
+  const currentBreakoutDate =
+    currentSupportLine === undefined
+      ? undefined
+      : candles[currentSupportLine.signalIndex]?.time;
+  const correctionUrl = `/api/trendline-corrections?${new URLSearchParams({
+    symbol,
+    timeframe,
+    adjustment
+  })}`;
   const zoomIn = () => {
     setVisibleBars((current) =>
       Math.max(minimumVisibleBars, Math.round(current * 0.72))
@@ -468,37 +625,219 @@ export function CandleChart({ symbol }: { symbol: string }) {
       Math.min(candles.length, Math.max(current + 1, Math.round(current * 1.4)))
     );
   };
-  const inspectAtClientX = (clientX: number) => {
+  const indexAtClientX = (clientX: number) => {
     const canvas = canvasRef.current;
-    if (!canvas || !candles.length) return;
+    if (!canvas || !candles.length) return undefined;
     const rect = canvas.getBoundingClientRect();
     const chartLeft = 12;
     const chartRight = 58;
     const chartWidth = Math.max(1, rect.width - chartLeft - chartRight);
     const count = Math.min(visibleBars, candles.length);
     const startIndex = candles.length - count;
+    const xStep = chartWidth / (count + getProjectionBarCount(count));
     const localX = Math.max(
       0,
       Math.min(chartWidth - 0.01, clientX - rect.left - chartLeft)
     );
-    const offset = Math.floor(localX / (chartWidth / count));
-    setInspectedIndex(startIndex + offset);
+    const offset = Math.min(count - 1, Math.floor(localX / xStep));
+    return startIndex + offset;
+  };
+  const inspectAtClientX = (clientX: number) => {
+    const index = indexAtClientX(clientX);
+    if (index !== undefined) setInspectedIndex(index);
   };
   const resetChartView = () => {
     setVisibleBars(DEFAULT_VISIBLE_BARS);
     setInspectedIndex(undefined);
   };
 
+  const createSystemDraft = (): EditableTrendline | undefined => {
+    const h1Index = systemTrendline.h1?.index;
+    const h2Index = systemTrendline.line?.endIndex;
+    if (h1Index === undefined || h2Index === undefined || h2Index <= h1Index) {
+      return undefined;
+    }
+    return {
+      h1Index,
+      h2Index,
+      reason: visibleCorrection?.reason ?? "",
+      notes: visibleCorrection?.notes ?? "",
+      submittedForLearning: visibleCorrection?.submittedForLearning ?? false
+    };
+  };
+
+  const startEditing = () => {
+    const nextDraft = correctionEditable ?? createSystemDraft();
+    if (!nextDraft) {
+      setFeedback("目前沒有可編輯的下降趨勢線。");
+      return;
+    }
+    setDraft(nextDraft);
+    setVisibleBars((current) =>
+      Math.min(candles.length, Math.max(current, candles.length - nextDraft.h1Index))
+    );
+    setInspectedIndex(undefined);
+    setFeedback("");
+    setEditing(true);
+  };
+
+  const beginAnchorDrag = (clientX: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !draft) return false;
+    const rect = canvas.getBoundingClientRect();
+    const count = Math.min(visibleBars, candles.length);
+    const startIndex = candles.length - count;
+    const xStep = Math.max(
+      1,
+      (rect.width - 12 - 58) / (count + getProjectionBarCount(count))
+    );
+    const pointerX = clientX - rect.left;
+    const anchorX = (index: number) =>
+      12 + xStep * (index - startIndex) + xStep / 2;
+    const options = [
+      { anchor: "h1" as const, distance: Math.abs(pointerX - anchorX(draft.h1Index)) },
+      { anchor: "h2" as const, distance: Math.abs(pointerX - anchorX(draft.h2Index)) }
+    ].sort((left, right) => left.distance - right.distance);
+    if (options[0].distance > 32) {
+      setFeedback("請按住紫色的校正 H1 或 H2 圓點再拖曳。");
+      return false;
+    }
+    draggingAnchorRef.current = options[0].anchor;
+    setFeedback("");
+    return true;
+  };
+
+  const dragAnchorTo = (clientX: number) => {
+    const index = indexAtClientX(clientX);
+    const anchor = draggingAnchorRef.current;
+    if (index === undefined || !anchor) return;
+    setDraft((current) => {
+      if (!current) return current;
+      return anchor === "h1"
+        ? { ...current, h1Index: Math.min(index, current.h2Index - 1) }
+        : { ...current, h2Index: Math.max(index, current.h1Index + 1) };
+    });
+  };
+
+  const saveCorrection = async () => {
+    if (!draft?.reason) {
+      setFeedback("請先選擇校正原因。");
+      return;
+    }
+    const h1 = candles[draft.h1Index];
+    const h2 = candles[draft.h2Index];
+    if (!h1 || !h2 || draft.h2Index <= draft.h1Index) {
+      setFeedback("H1 必須位於 H2 之前。");
+      return;
+    }
+    if (h1.high <= h2.high) {
+      setFeedback("下降趨勢線的 H1 必須高於 H2，請重新拖曳。");
+      return;
+    }
+
+    const input: TrendlineCorrectionInput = {
+      symbol,
+      timeframe,
+      adjustment,
+      h1: { date: h1.time, price: h1.high },
+      h2: { date: h2.time, price: h2.high },
+      originalH1: systemTrendline.h1
+        ? { date: systemTrendline.h1.date, price: systemTrendline.h1.price }
+        : null,
+      originalH2: systemTrendline.line
+        ? { date: systemTrendline.line.endDate, price: systemTrendline.line.endPrice }
+        : null,
+      reason: draft.reason,
+      notes: draft.notes,
+      submittedForLearning: draft.submittedForLearning
+    };
+
+    setSaving(true);
+    setFeedback("正在儲存校正…");
+    try {
+      const response = await fetch(correctionUrl, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input)
+      });
+      const payload = (await response.json()) as {
+        correction?: TrendlineCorrection;
+        error?: string;
+      };
+      if (!response.ok || !payload.correction) {
+        throw new Error(payload.error ?? "儲存失敗");
+      }
+      setCorrection(payload.correction);
+      setEditing(false);
+      setFeedback(
+        payload.correction.submittedForLearning
+          ? "已儲存，並加入邏輯學習案例。"
+          : "已儲存這檔股票的人工趨勢線。"
+      );
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "儲存失敗");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteCorrection = async () => {
+    setSaving(true);
+    setFeedback("正在還原系統趨勢線…");
+    try {
+      const response = await fetch(correctionUrl, { method: "DELETE" });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "還原失敗");
+      setCorrection(null);
+      setDraft(undefined);
+      setEditing(false);
+      setFeedback("已刪除人工校正，恢復顯示系統趨勢線。");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "還原失敗");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(correctionUrl, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const payload = (await response.json()) as {
+          correction?: TrendlineCorrection | null;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(payload.error ?? "讀取校正失敗");
+        setCorrection(payload.correction ?? null);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFeedback(error instanceof Error ? error.message : "讀取校正失敗");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCorrectionLoading(false);
+      });
+    return () => controller.abort();
+  }, [correctionUrl]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !candles.length) return;
     const redraw = () =>
-      drawChart(canvas, candles, trace, visibleBars, inspectedIndex);
+      drawChart(
+        canvas,
+        candles,
+        trace,
+        visibleBars,
+        inspectedIndex,
+        manualLine,
+        intradaySnapshot
+      );
     redraw();
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [candles, inspectedIndex, trace, visibleBars]);
+  }, [candles, inspectedIndex, intradaySnapshot, manualLine, trace, visibleBars]);
 
   return (
     <section className="panel chart-shell">
@@ -510,6 +849,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
               className={`timeframe-button ${timeframe === item.value ? "active" : ""}`}
               key={item.value}
               onClick={() => {
+                if (item.value !== timeframe) {
+                  setCorrectionLoading(true);
+                  setCorrection(null);
+                  setDraft(undefined);
+                  setEditing(false);
+                  setFeedback("");
+                }
                 setTimeframe(item.value);
                 resetChartView();
               }}
@@ -526,6 +872,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
               aria-pressed={adjustment === "adjusted"}
               className={adjustment === "adjusted" ? "active" : ""}
               onClick={() => {
+                if (adjustment !== "adjusted") {
+                  setCorrectionLoading(true);
+                  setCorrection(null);
+                  setDraft(undefined);
+                  setEditing(false);
+                  setFeedback("");
+                }
                 setAdjustment("adjusted");
                 resetChartView();
               }}
@@ -537,6 +890,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
               aria-pressed={adjustment === "raw"}
               className={adjustment === "raw" ? "active" : ""}
               onClick={() => {
+                if (adjustment !== "raw") {
+                  setCorrectionLoading(true);
+                  setCorrection(null);
+                  setDraft(undefined);
+                  setEditing(false);
+                  setFeedback("");
+                }
                 setAdjustment("raw");
                 resetChartView();
               }}
@@ -575,17 +935,36 @@ export function CandleChart({ symbol }: { symbol: string }) {
             全部
           </button>
         </div>
+        <button
+          className={`trendline-edit-button ${editing ? "active" : ""}`}
+          disabled={correctionLoading || saving || !systemTrendline.line}
+          onClick={() => {
+            if (editing) {
+              setDraft(undefined);
+              setEditing(false);
+              setFeedback("");
+            } else {
+              startEditing();
+            }
+          }}
+          type="button"
+        >
+          {editing ? "取消編輯" : visibleCorrection ? "編輯人工線" : "編輯趨勢線"}
+        </button>
         <div className="chart-legend">
           <span><i className="legend-dot" style={{ background: "var(--amber)" }} />H1</span>
-          <span><i className="legend-dot" style={{ background: "var(--blue)" }} />逐 K 追蹤線</span>
+          <span><i className="legend-dot" style={{ background: "var(--blue)" }} />系統趨勢線</span>
+          {manualLine ? <span><i className="legend-dot trendline-manual-dot" />人工趨勢線</span> : null}
           <span><i className="legend-dot" style={{ background: "var(--up)" }} />紅 K 穿越</span>
-          <span><i className="legend-dot" style={{ background: "var(--cyan)" }} />當根既有線價</span>
+          {historicalSupportLine ? <span><i className="legend-dot" style={{ background: "#ff9aa1" }} />過往防守</span> : null}
+          {currentSupportLine ? <span><i className="legend-dot" style={{ background: "#ffd166" }} />目前防守</span> : null}
         </div>
       </div>
       {dataNote ? (
         <div className="chart-source">
           {symbol}｜最新 OHLCV 已由
           {dataNote.latestVerification?.source ?? "官方市場"}核對（{dataNote.dataAsOf}） ·
+          {intradaySnapshot ? "盤中快照僅作預警 · " : "正式收盤 · "}
           五年歷史 {dataNote.historyDays} 日 ·
           {adjustment === "adjusted"
             ? "還原 K：使用歷史資料供應商的還原因子"
@@ -593,38 +972,79 @@ export function CandleChart({ symbol }: { symbol: string }) {
         </div>
       ) : null}
       <div className="chart-source">
-        {BREAKOUT_SIGNAL_NAME}｜顯示最近 {visibleBarCount} 根 · 可用按鈕或滑鼠滾輪縮放 · 按住或點選 K 棒查看日期與四價
-        {trace.activeH1 && trace.currentLine
-          ? `｜H1 ${trace.activeH1.date} → H2 ${trace.currentLine.endDate}`
+        {BREAKOUT_SIGNAL_NAME}｜顯示最近 {visibleBarCount} 根 · 可用按鈕或滑鼠滾輪縮放 · {editing ? "拖曳紫色 H1、H2 圓點校正" : "按住或點選 K 棒查看日期與四價"}
+        {systemTrendline.h1 && systemTrendline.line
+          ? `｜系統 H1 ${systemTrendline.h1.date} → H2 ${systemTrendline.line.endDate}`
           : ""}
-        {inspectedCandle
-          ? `｜${inspectedCandle.time} · 最高 ${formatPrice(inspectedCandle.high)} · 最低 ${formatPrice(inspectedCandle.low)} · 開盤 ${formatPrice(inspectedCandle.open)} · 收盤 ${formatPrice(inspectedCandle.close)}`
+        {manualLine
+          ? `｜人工 H1 ${manualLine.h1Date} → H2 ${manualLine.endDate}`
           : ""}
+        {historicalSupportLine
+          ? `｜過往防守 ${formatPrice(historicalSupportLine.price)}`
+          : ""}
+        {currentSupportLine
+          ? `｜目前防守 ${currentBreakoutDate ?? "穿越紅 K"} 低點 ${formatPrice(currentSupportLine.price)}，收盤尚未跌破`
+          : ""}
+      </div>
+      <div className={`chart-inspection-bar ${inspectedCandle ? "active" : ""}`} aria-live="polite">
+        {inspectedCandle ? (
+          <>
+            <span className="chart-inspection-item chart-inspection-time"><small>時間</small><strong>{inspectedCandle.time.replaceAll("-", "/")}</strong></span>
+            <span className="chart-inspection-item"><small>高</small><strong>{formatPrice(inspectedCandle.high)}</strong></span>
+            <span className="chart-inspection-item"><small>低</small><strong>{formatPrice(inspectedCandle.low)}</strong></span>
+            <span className="chart-inspection-item"><small>開</small><strong>{formatPrice(inspectedCandle.open)}</strong></span>
+            <span className="chart-inspection-item"><small>{intradaySnapshot ? "現" : "收"}</small><strong>{formatPrice(inspectedCandle.close)}</strong></span>
+          </>
+        ) : (
+          <span className="chart-inspection-hint">按住或點選 K 棒，在這裡查看時間與四價</span>
+        )}
       </div>
       <canvas
         aria-label={`${symbol} ${timeframe} K 線、最近 H1、H2 與突破紅 K、MACD 與 DPO${
+          historicalSupportLine
+            ? `；過往防守線 ${formatPrice(historicalSupportLine.price)}`
+            : ""
+        }${
+          currentSupportLine
+            ? `；目前防守線 ${currentBreakoutDate ?? "穿越紅 K"} 低點 ${formatPrice(currentSupportLine.price)}，收盤尚未跌破`
+            : ""
+        }${
           inspectedCandle
-            ? `；已選取 ${inspectedCandle.time}，最高 ${formatPrice(inspectedCandle.high)}，最低 ${formatPrice(inspectedCandle.low)}，開盤 ${formatPrice(inspectedCandle.open)}，收盤 ${formatPrice(inspectedCandle.close)}`
+            ? `；已選取 ${inspectedCandle.time}，最高 ${formatPrice(inspectedCandle.high)}，最低 ${formatPrice(inspectedCandle.low)}，開盤 ${formatPrice(inspectedCandle.open)}，${intradaySnapshot ? "現價" : "收盤"} ${formatPrice(inspectedCandle.close)}`
             : ""
         }`}
         className="chart-canvas"
         onDoubleClick={() => {
+          if (editing) return;
           setVisibleBars(candles.length);
           setInspectedIndex(undefined);
         }}
         onPointerCancel={() => {
+          draggingAnchorRef.current = null;
           inspectingRef.current = false;
           setInspectedIndex(undefined);
         }}
         onPointerDown={(event) => {
+          if (editing) {
+            if (beginAnchorDrag(event.clientX)) {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              dragAnchorTo(event.clientX);
+            }
+            return;
+          }
           inspectingRef.current = true;
           event.currentTarget.setPointerCapture(event.pointerId);
           inspectAtClientX(event.clientX);
         }}
         onPointerMove={(event) => {
+          if (editing) {
+            dragAnchorTo(event.clientX);
+            return;
+          }
           if (inspectingRef.current) inspectAtClientX(event.clientX);
         }}
         onPointerUp={(event) => {
+          draggingAnchorRef.current = null;
           inspectingRef.current = false;
           if (event.currentTarget.hasPointerCapture(event.pointerId)) {
             event.currentTarget.releasePointerCapture(event.pointerId);
@@ -638,8 +1058,126 @@ export function CandleChart({ symbol }: { symbol: string }) {
         }}
         ref={canvasRef}
         style={{ touchAction: "pan-y" }}
-        title="按住或點選查看日期、最高、最低、開盤、收盤價；滾輪縮放；雙擊顯示全部 K 棒"
+        title={editing
+          ? "按住紫色的校正 H1 或 H2 圓點，拖到你認定的 K 棒"
+          : `按住或點選查看日期、最高、最低、開盤、${intradaySnapshot ? "現價" : "收盤價"}；滾輪縮放；雙擊顯示全部 K 棒`}
       />
+      {editing && draft && manualLine ? (
+        <div className="trendline-editor">
+          <div className="trendline-editor-head">
+            <div>
+              <strong>校正這檔股票的趨勢線</strong>
+              <p>拖曳圖上的紫色 H1、H2 圓點；錨點會吸附到該根 K 棒最高價。</p>
+            </div>
+            <span className="trendline-local-badge">只影響 {symbol}</span>
+          </div>
+          <div className="trendline-compare-grid">
+            <div className="trendline-compare-card system">
+              <span>系統原始線</span>
+              <strong>
+                {systemTrendline.h1?.date ?? "—"} → {systemTrendline.line?.endDate ?? "—"}
+              </strong>
+              <small>
+                H1 {systemTrendline.h1 ? formatPrice(systemTrendline.h1.price) : "—"} · H2 {systemTrendline.line ? formatPrice(systemTrendline.line.endPrice) : "—"}
+              </small>
+            </div>
+            <div className="trendline-compare-card manual">
+              <span>你的人工線</span>
+              <strong>{manualLine.h1Date} → {manualLine.endDate}</strong>
+              <small>H1 {formatPrice(manualLine.startPrice)} · H2 {formatPrice(manualLine.endPrice)}</small>
+            </div>
+          </div>
+          <div className="trendline-editor-form">
+            <label className="trendline-field">
+              <span>為什麼要校正？</span>
+              <select
+                onChange={(event) =>
+                  setDraft((current) => current
+                    ? { ...current, reason: event.target.value as TrendlineCorrectionReason }
+                    : current)
+                }
+                value={draft.reason}
+              >
+                <option value="">請選擇原因</option>
+                {trendlineCorrectionReasons.map((reason) => (
+                  <option key={reason} value={reason}>{reason}</option>
+                ))}
+              </select>
+            </label>
+            <label className="trendline-field trendline-notes">
+              <span>補充你的判斷邏輯（選填）</span>
+              <textarea
+                maxLength={1000}
+                onChange={(event) =>
+                  setDraft((current) => current
+                    ? { ...current, notes: event.target.value }
+                    : current)
+                }
+                placeholder="例如：應以 6/18 的反彈高點連到 7/9，因為中間高點沒有形成有效壓力。"
+                rows={3}
+                value={draft.notes}
+              />
+            </label>
+          </div>
+          <label className="trendline-learning-option">
+            <input
+              checked={draft.submittedForLearning}
+              onChange={(event) =>
+                setDraft((current) => current
+                  ? { ...current, submittedForLearning: event.target.checked }
+                  : current)
+              }
+              type="checkbox"
+            />
+            <span>
+              <strong>提交為邏輯學習案例</strong>
+              <small>先保存成可分析的案例，不會自動改動全站選股與掃描結果。</small>
+            </span>
+          </label>
+          <div className="trendline-editor-actions">
+            <button
+              className="secondary-button"
+              disabled={saving}
+              onClick={() => {
+                const next = createSystemDraft();
+                if (next) setDraft(next);
+                setFeedback("已把編輯中的錨點重設為系統原始線，尚未儲存。");
+              }}
+              type="button"
+            >
+              重設錨點
+            </button>
+            {visibleCorrection ? (
+              <button
+                className="danger-button"
+                disabled={saving}
+                onClick={deleteCorrection}
+                type="button"
+              >
+                刪除校正
+              </button>
+            ) : null}
+            <button
+              className="primary-button"
+              disabled={saving}
+              onClick={saveCorrection}
+              type="button"
+            >
+              {saving ? "儲存中…" : "儲存人工線"}
+            </button>
+          </div>
+        </div>
+      ) : visibleCorrection && correctionEditable && manualLine ? (
+        <div className="trendline-correction-summary">
+          <div>
+            <strong>已套用人工趨勢線</strong>
+            <span>{manualLine.h1Date} → {manualLine.endDate} · {visibleCorrection.reason}</span>
+          </div>
+          {visibleCorrection.submittedForLearning ? <em>邏輯學習案例</em> : null}
+          <button disabled={saving} onClick={deleteCorrection} type="button">還原系統線</button>
+        </div>
+      ) : null}
+      {feedback ? <div className="trendline-feedback" role="status">{feedback}</div> : null}
     </section>
   );
 }

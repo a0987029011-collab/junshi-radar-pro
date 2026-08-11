@@ -62,6 +62,116 @@ export interface TrendlineSignal extends TrendlineEvaluation {
   name: typeof BREAKOUT_SIGNAL_NAME;
 }
 
+export interface BreakoutLowLine {
+  signalIndex: number;
+  endIndex: number;
+  price: number;
+  active: boolean;
+  brokenIndex?: number;
+}
+
+export function getLatestBreakoutLowLine(
+  candles: Array<Pick<CandlePoint, 'low' | 'close'>>,
+  signals: TrendlineSignal[]
+): BreakoutLowLine | undefined {
+  const confirmedSignalIndexes = new Set(
+    signals
+      .filter(
+        (signal) =>
+          signal.closeConfirmation &&
+          signal.breakoutType &&
+          signal.index >= 0 &&
+          signal.index < candles.length
+      )
+      .map((signal) => signal.index)
+  );
+  let activeLine: BreakoutLowLine | undefined;
+
+  candles.forEach((candle, index) => {
+    if (
+      activeLine &&
+      index > activeLine.signalIndex &&
+      candle.close < activeLine.price
+    ) {
+      activeLine = undefined;
+    }
+
+    if (!activeLine && confirmedSignalIndexes.has(index) && Number.isFinite(candle.low)) {
+      activeLine = {
+        signalIndex: index,
+        endIndex: candles.length - 1,
+        price: candle.low,
+        active: true
+      };
+    }
+  });
+
+  return activeLine;
+}
+
+export function getNearestActiveBreakoutLowLine(
+  candles: Array<Pick<CandlePoint, 'low' | 'close'>>,
+  signals: TrendlineSignal[],
+  currentPrice = candles.at(-1)?.close
+): BreakoutLowLine | undefined {
+  if (!Number.isFinite(currentPrice)) return undefined;
+
+  return signals
+    .filter((signal) => signal.closeConfirmation && signal.breakoutType)
+    .map((signal): BreakoutLowLine | undefined => {
+      const price = candles[signal.index]?.low;
+      if (!Number.isFinite(price) || price >= (currentPrice as number)) {
+        return undefined;
+      }
+      const brokenIndex = candles
+        .slice(signal.index + 1)
+        .findIndex((candle) => candle.close < price);
+      if (brokenIndex >= 0) return undefined;
+      return {
+        signalIndex: signal.index,
+        endIndex: candles.length - 1,
+        price,
+        active: true
+      };
+    })
+    .filter((line): line is BreakoutLowLine => line !== undefined)
+    .sort(
+      (left, right) =>
+        right.price - left.price || right.signalIndex - left.signalIndex
+    )[0];
+}
+
+export function getTrendlineBreakoutLowLine(
+  candles: Array<Pick<CandlePoint, 'open' | 'low' | 'close'>>,
+  line: TrackingLineSegment
+): BreakoutLowLine | undefined {
+  if (line.slope >= 0 || line.endIndex >= candles.length - 1) return undefined;
+
+  for (let index = line.endIndex + 1; index < candles.length; index += 1) {
+    const candle = candles[index];
+    const linePrice = priceOnTrackingLine(line, index);
+    const crossedByRedCandle =
+      candle.close > candle.open && candle.close > linePrice;
+    if (!crossedByRedCandle) continue;
+
+    const breakOffset = candles
+      .slice(index + 1)
+      .findIndex((laterCandle) => laterCandle.close < candle.low);
+    const brokenIndex =
+      breakOffset < 0 ? undefined : index + 1 + breakOffset;
+
+    return {
+      signalIndex: index,
+      endIndex: brokenIndex ?? candles.length - 1,
+      price: candle.low,
+      active: brokenIndex === undefined,
+      ...(brokenIndex === undefined ? {} : { brokenIndex })
+    };
+  }
+
+  return undefined;
+}
+
 export interface H1TrendlineScan {
   h1Points: H1Point[];
   lineSegments: TrackingLineSegment[];

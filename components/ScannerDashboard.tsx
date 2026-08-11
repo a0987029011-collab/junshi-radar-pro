@@ -2,7 +2,10 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { getScannableSnapshotProfiles } from '../lib/market-data';
+import {
+  getScannableSnapshotProfiles,
+  marketSnapshotMeta
+} from '../lib/market-data';
 import {
   BREAKOUT_TYPE_LABELS,
   scanStocks,
@@ -30,7 +33,13 @@ function conditionClass(active: boolean) {
   return active ? 'text-rose-300' : 'text-slate-400';
 }
 
-function ResultCard({ item }: { item: ScanResultItem }) {
+function ResultCard({
+  item,
+  intraday
+}: {
+  item: ScanResultItem;
+  intraday: boolean;
+}) {
   const latestCandle = item.candles.at(-1);
   const redCandle = Boolean(
     latestCandle && latestCandle.close > latestCandle.open
@@ -51,13 +60,17 @@ function ResultCard({ item }: { item: ScanResultItem }) {
           </h3>
         </div>
         <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-          item.closeConfirmation
+          intraday && item.signalOnLatestBar
+            ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
+            : item.closeConfirmation
             ? 'border-rose-400/50 bg-rose-500/10 text-rose-200'
             : item.intradayWarning
               ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
               : 'border-slate-700 bg-slate-900 text-slate-300'
         }`}>
-          {item.breakoutType
+          {intraday && item.signalOnLatestBar
+            ? '盤中預警'
+            : item.breakoutType
             ? BREAKOUT_TYPE_LABELS[item.breakoutType]
             : item.status}
         </span>
@@ -78,9 +91,9 @@ function ResultCard({ item }: { item: ScanResultItem }) {
         </div>
       </div>
 
-      {latestCandle && item.breakoutType ? (
+      {latestCandle && (item.breakoutType || (intraday && item.signalOnLatestBar)) ? (
         <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/65 px-3 py-2 font-mono text-xs text-slate-300">
-          開 {formatPrice(latestCandle.open)} · 線 {formatPrice(item.linePrice)} · 收 {formatPrice(latestCandle.close)}
+          開 {formatPrice(latestCandle.open)} · 線 {formatPrice(item.linePrice)} · {intraday ? '現' : '收'} {formatPrice(latestCandle.close)}
         </div>
       ) : null}
 
@@ -108,13 +121,16 @@ export default function ScannerDashboard() {
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('全部');
   const [sortOption, setSortOption] = useState<SortOption>('signal');
   const [activeSignalPage, setActiveSignalPage] = useState<SignalPage>('body-cross');
-  const [version, setVersion] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
+  const isIntradaySnapshot =
+    marketSnapshotMeta.marketPhase === 'intraday' ||
+    marketSnapshotMeta.mode.includes('intraday');
 
   const sourceStocks = useMemo(() => {
-    void version;
     const snapshotStocks = getScannableSnapshotProfiles();
     return snapshotStocks.length ? snapshotStocks : importedStocks;
-  }, [version]);
+  }, []);
 
   const scanResults = useMemo(() => {
     const results = scanStocks(sourceStocks, sourceStocks.length);
@@ -130,39 +146,30 @@ export default function ScannerDashboard() {
       if (sortOption === 'h1') {
         return (right.h1Index ?? -1) - (left.h1Index ?? -1);
       }
-      const confirmationOrder =
-        Number(right.closeConfirmation) - Number(left.closeConfirmation);
+      const confirmationOrder = isIntradaySnapshot
+        ? 0
+        : Number(right.closeConfirmation) - Number(left.closeConfirmation);
       if (confirmationOrder !== 0) return confirmationOrder;
       const warningOrder =
         Number(right.intradayWarning) - Number(left.intradayWarning);
       if (warningOrder !== 0) return warningOrder;
       return (right.signalDate ?? '').localeCompare(left.signalDate ?? '');
     });
-  }, [marketFilter, sortOption, sourceStocks]);
+  }, [isIntradaySnapshot, marketFilter, sortOption, sourceStocks]);
 
-  const summary = useMemo(
-    () => ({
-      scanned: sourceStocks.length,
-      bodyCross: scanResults.filter(
-        (item) => item.closeConfirmation && item.breakoutType === 'body-cross'
-      ).length,
-      gapAbove: scanResults.filter(
-        (item) => item.closeConfirmation && item.breakoutType === 'gap-above'
-      ).length,
-      intradayOnly: scanResults.filter(
-        (item) => item.intradayWarning && !item.closeConfirmation
-      ).length
-    }),
-    [scanResults, sourceStocks.length]
-  );
+  const isCurrentIntradaySignal = (item: ScanResultItem) =>
+    item.signalOnLatestBar && (item.intradayWarning || item.closeConfirmation);
+
   const bodyCrossResults = scanResults.filter(
-    (item) => item.closeConfirmation && item.breakoutType === 'body-cross'
+    (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'body-cross'
   );
   const gapAboveResults = scanResults.filter(
-    (item) => item.closeConfirmation && item.breakoutType === 'gap-above'
+    (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'gap-above'
   );
   const intradayWarningResults = scanResults.filter(
-    (item) => item.intradayWarning && !item.closeConfirmation
+    (item) => isIntradaySnapshot
+      ? isCurrentIntradaySignal(item)
+      : item.intradayWarning && !item.closeConfirmation
   );
   const signalPages = [
     {
@@ -195,6 +202,25 @@ export default function ScannerDashboard() {
   }>;
   const activePage = signalPages.find((page) => page.id === activeSignalPage)!;
 
+  const refreshMarketData = async () => {
+    setRefreshing(true);
+    setRefreshMessage('正在取得市場行情，請不要關閉此頁…');
+    try {
+      const response = await fetch('/api/market-refresh', { method: 'POST' });
+      const payload = (await response.json()) as { error?: string; mode?: string };
+      if (!response.ok) throw new Error(payload.error ?? '更新失敗');
+      setRefreshMessage(
+        payload.mode === 'intraday'
+          ? '盤中行情已更新，正在重新整理雷達…'
+          : '盤後完整資料已更新，正在重新整理雷達…'
+      );
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      setRefreshMessage(error instanceof Error ? error.message : '市場資料更新失敗');
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <header className="rounded-3xl border border-slate-800 bg-slate-900/80 p-7 shadow-xl shadow-slate-950/30">
@@ -210,6 +236,16 @@ export default function ScannerDashboard() {
               H1 次根確認後立即連線；每根 K 先用既有線判斷，再於未觸發時接入當根 high。
               訊號同根確認紅 K、MACD 負柱縮短與 DPO 上彎；收盤確認再依開盤價分為實體穿越與跳空站上。
             </p>
+            <div className={`mt-5 inline-flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+              isIntradaySnapshot
+                ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+                : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+            }`}>
+              <span className={`h-2 w-2 rounded-full ${isIntradaySnapshot ? 'bg-amber-300' : 'bg-emerald-300'}`} />
+              <strong>{isIntradaySnapshot ? '盤中快照｜僅作預警' : '正式收盤資料'}</strong>
+              <span>資料日期 {marketSnapshotMeta.dataAsOf}</span>
+              {marketSnapshotMeta.quoteTime ? <span>擷取 {marketSnapshotMeta.quoteTime.slice(0, 8)}</span> : null}
+            </div>
           </div>
           <div className="flex flex-wrap gap-3">
             <label className="sr-only" htmlFor="market-filter">市場</label>
@@ -226,29 +262,22 @@ export default function ScannerDashboard() {
               ))}
             </select>
             <button
-              onClick={() => setVersion((value) => value + 1)}
-              className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm text-cyan-200 transition hover:bg-cyan-500/20"
+              aria-busy={refreshing}
+              className="rounded-2xl border border-amber-400/45 bg-amber-400/15 px-5 py-3 text-sm font-semibold text-amber-100 transition hover:bg-amber-400/25 disabled:cursor-wait disabled:opacity-60"
+              disabled={refreshing}
+              onClick={refreshMarketData}
               type="button"
             >
-              重新掃描
+              {refreshing ? '更新中…' : '更新市場資料'}
             </button>
           </div>
         </div>
-      </header>
-
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="掃描摘要">
-        {[
-          ['掃描股票', `${summary.scanned} 檔`],
-          ['紅 K 實體穿越', `${summary.bodyCross} 檔`],
-          ['跳空紅 K 站上', `${summary.gapAbove} 檔`],
-          ['盤中預警', `${summary.intradayOnly} 檔`],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
-            <p className="text-sm text-slate-400">{label}</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+        {refreshMessage ? (
+          <div className="mt-5 rounded-xl border border-slate-700 bg-slate-950/65 px-4 py-3 text-sm text-slate-300" role="status">
+            {refreshMessage}
           </div>
-        ))}
-      </section>
+        ) : null}
+      </header>
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/20">
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -319,7 +348,7 @@ export default function ScannerDashboard() {
           {activePage.items.length ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {activePage.items.map((item) => (
-                <ResultCard item={item} key={item.symbol} />
+                <ResultCard intraday={isIntradaySnapshot} item={item} key={item.symbol} />
               ))}
             </div>
           ) : (

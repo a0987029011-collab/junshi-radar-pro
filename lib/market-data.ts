@@ -13,6 +13,9 @@ interface SnapshotMeta {
   market: string;
   mode: string;
   provider: string;
+  marketPhase?: "intraday" | "closed";
+  quoteTime?: string | null;
+  quoteCapturedAt?: string;
   sources: Record<string, string>;
   limitations: Record<string, string>;
   quoteDates?: Partial<Record<"TWSE" | "TPEx", string>>;

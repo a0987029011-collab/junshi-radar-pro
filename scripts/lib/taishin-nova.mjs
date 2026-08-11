@@ -169,6 +169,8 @@ export async function fetchTaishinNovaSnapshotsWithSdk({
   return {
     date,
     quoteDates,
+    quoteTime: snapshots.map((snapshot) => snapshot.time).sort().at(-1),
+    quoteCapturedAt: new Date().toISOString(),
     quotes: snapshots.flatMap((snapshot) => snapshot.quotes),
     quoteProvider: "taishin-nova",
     quoteSource:

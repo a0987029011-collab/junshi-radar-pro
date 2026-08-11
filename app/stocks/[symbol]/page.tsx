@@ -7,7 +7,8 @@ import { WatchButton } from "../../../components/ReviewControls";
 import { formatPrice } from "../../../components/StockUI";
 import {
   getMarketCandles,
-  getMarketDataNote
+  getMarketDataNote,
+  marketSnapshotMeta
 } from "../../../lib/market-data";
 import { getScannedStock } from "../../../lib/scoring-engine";
 import {
@@ -67,21 +68,32 @@ export default async function StockPage({
   const latestSignal = scanResult.signals.at(-1);
   const dataNote = getMarketDataNote(symbol);
   const redCandle = latestCandle.close > latestCandle.open;
+  const intradaySnapshot =
+    marketSnapshotMeta.marketPhase === "intraday" ||
+    marketSnapshotMeta.mode.includes("intraday");
 
   return (
     <RadarShell activePath="/">
       <section className="panel p-5 sm:p-7">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <Link className="text-xs text-cyan-300" href="/">← 返回 H1 雷達</Link>
-            <p className="mt-5 text-xs uppercase tracking-[0.3em] text-cyan-300/80">
+            <Link
+              aria-label="返回 H1 雷達"
+              className="stock-floating-back"
+              href="/"
+              title="返回 H1 雷達"
+            >
+              <span aria-hidden="true" className="stock-floating-back-arrow">←</span>
+              <span className="stock-floating-back-label">返回雷達</span>
+            </Link>
+            <p className="text-xs uppercase tracking-[0.3em] text-cyan-300/80">
               {profile.market} · {profile.sector} · H1 Tracker
             </p>
             <h1 className="mt-2 text-3xl font-semibold text-white">
               {stock.name} <span className="text-slate-500">{stock.symbol}</span>
             </h1>
             <p className="mt-2 text-sm text-slate-400">
-              {latestCandle.date} 收盤 · 只執行「下降趨勢線紅 K 穿越」
+              {latestCandle.date} {intradaySnapshot ? "盤中快照（僅作預警）" : "收盤"} · 只執行「下降趨勢線紅 K 穿越」
             </p>
           </div>
           <div className="flex items-center gap-4 sm:text-right">
@@ -90,18 +102,22 @@ export default async function StockPage({
                 {formatPrice(latestCandle.close)}
               </p>
               <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs ${
-                scanResult.closeConfirmation
+                intradaySnapshot && scanResult.signalOnLatestBar
+                  ? "border-amber-400/50 bg-amber-500/10 text-amber-200"
+                  : scanResult.closeConfirmation
                   ? "border-rose-400/50 bg-rose-500/10 text-rose-200"
                   : scanResult.intradayWarning
                     ? "border-amber-400/50 bg-amber-500/10 text-amber-200"
                     : "border-slate-700 text-slate-300"
               }`}>
-                {scanResult.breakoutType
+                {intradaySnapshot && scanResult.signalOnLatestBar
+                  ? "盤中預警"
+                  : scanResult.breakoutType
                   ? BREAKOUT_TYPE_LABELS[scanResult.breakoutType]
                   : scanResult.status}
               </span>
             </div>
-            <WatchButton symbol={stock.symbol} />
+            <WatchButton name={stock.name} symbol={stock.symbol} />
           </div>
         </div>
       </section>
@@ -164,16 +180,20 @@ export default async function StockPage({
             <small className="mt-1 block text-slate-500">盤中預警仍需三項確認條件</small>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
-            <p className="text-xs text-slate-500">收盤 close 站線</p>
+            <p className="text-xs text-slate-500">{intradaySnapshot ? "盤中現價" : "收盤 close"} 站線</p>
             <strong className={`mt-2 block text-lg ${stateTone(Boolean(currentEvaluation?.closeCrossed))}`}>
               {currentEvaluation?.closeCrossed ? "已站上" : "未站上"}
             </strong>
-            <small className="mt-1 block text-slate-500">紅 K 收盤才確認</small>
+            <small className="mt-1 block text-slate-500">
+              {intradaySnapshot ? "目前只列預警，紅 K 收盤後才確認" : "紅 K 收盤才確認"}
+            </small>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
             <p className="text-xs text-slate-500">收盤穿越型態</p>
             <strong className={`mt-2 block text-lg ${stateTone(Boolean(scanResult.breakoutType))}`}>
-              {scanResult.breakoutType
+              {intradaySnapshot
+                ? "等待收盤確認"
+                : scanResult.breakoutType
                 ? BREAKOUT_TYPE_LABELS[scanResult.breakoutType]
                 : "尚未確認"}
             </strong>
@@ -206,9 +226,11 @@ export default async function StockPage({
         {latestSignal ? (
           <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-500/5 px-4 py-3 text-sm text-rose-100">
             最近一次通知：{latestSignal.date}，同一追蹤線第 {latestSignal.roundId} 輪僅記錄一次；
-            {latestSignal.closeConfirmation && latestSignal.breakoutType
+            {!intradaySnapshot && latestSignal.closeConfirmation && latestSignal.breakoutType
               ? `${BREAKOUT_TYPE_LABELS[latestSignal.breakoutType]}確認成立`
-              : "盤中預警後未收上線"}。
+              : intradaySnapshot
+                ? "目前為盤中預警，需待收盤後確認"
+                : "盤中預警後未收上線"}。
           </div>
         ) : null}
       </section>

@@ -14,7 +14,7 @@
 - 依 `S / A+ / A / Seed / Watch` 自動分類。
 - 最新開高低收量以證交所、櫃買中心官方盤後行情校正。
 - 可選擇富果授權還原歷史行情；沒有金鑰時使用延遲歷史來源。
-- GitHub Actions 於台北時間每個交易日 21:45 更新快照；資料提交後 Vercel 會自動部署。
+- Windows 於台北時間每個交易日 13:45 使用本機台新 Nova 更新，GitHub Actions 於 21:45 再做官方盤後備援。
 - 保留既有手機版與桌面版 UI。
 
 ## 資料流程
@@ -90,10 +90,12 @@ Vercel 不需要保存這個金鑰，因為每日掃描由 GitHub Actions 執行
 
 工作流程位於 [`.github/workflows/update-radar.yml`](.github/workflows/update-radar.yml)：
 
+- Windows 登入後會自動啟動本機網站；安裝方式為 `pnpm automation:install`。
+- 本機每週一至週五台北時間 13:45 自動更新，失敗時會重試。
 - 可在 GitHub `Actions → Update Junshi Radar → Run workflow` 手動執行。
-- 每週一至週五台北時間 21:45 自動執行。
+- GitHub 每週一至週五台北時間 21:45 自動執行官方盤後備援。
 - 更新完成後提交 `data/radar-snapshot.json` 至 `main`。
-- Vercel 偵測到新提交後自動發布。
+- 手機與桌面雷達頁面每分鐘檢查新資料，偵測到新版本會自動重新載入。
 
 ## 環境變數
 
