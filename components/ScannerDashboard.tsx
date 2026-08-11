@@ -1,224 +1,334 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { getScannableSnapshotProfiles } from '../lib/market-data';
+import {
+  BREAKOUT_TYPE_LABELS,
+  scanStocks,
+  type ScanResultItem
+} from '../lib/scanEngine';
 import { importedStocks } from '../lib/stockData';
-import { verifiedCandidates, getMarketCandles } from '../lib/market-data';
-import { scanStocks } from '../lib/scanEngine';
 
 const marketFilterOptions = ['全部', '上市', '上櫃'] as const;
 const sortOptions = [
-  { value: 'structure', label: '結構強度' },
-  { value: 'majorTrendline', label: '大級別趨勢線' }
+  { value: 'signal', label: '今日訊號優先' },
+  { value: 'date', label: '最近訊號日期' },
+  { value: 'h1', label: '最新 H1' }
 ] as const;
 
 type MarketFilter = (typeof marketFilterOptions)[number];
 type SortOption = (typeof sortOptions)[number]['value'];
+type SignalPage = 'body-cross' | 'gap-above' | 'intraday-warning';
+
+function formatPrice(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return '—';
+  return value >= 100 ? value.toFixed(1) : value.toFixed(2);
+}
+
+function conditionClass(active: boolean) {
+  return active ? 'text-rose-300' : 'text-slate-400';
+}
+
+function ResultCard({ item }: { item: ScanResultItem }) {
+  const latestCandle = item.candles.at(-1);
+  const redCandle = Boolean(
+    latestCandle && latestCandle.close > latestCandle.open
+  );
+
+  return (
+    <Link
+      href={`/stocks/${item.symbol}`}
+      className="group block rounded-3xl border border-slate-800 bg-slate-950/55 p-5 transition hover:-translate-y-0.5 hover:border-cyan-500/40"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.28em] text-cyan-300/80">
+            {item.market} · {item.sector}
+          </p>
+          <h3 className="mt-2 text-xl font-semibold text-white">
+            {item.symbol} {item.name}
+          </h3>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+          item.closeConfirmation
+            ? 'border-rose-400/50 bg-rose-500/10 text-rose-200'
+            : item.intradayWarning
+              ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
+              : 'border-slate-700 bg-slate-900 text-slate-300'
+        }`}>
+          {item.breakoutType
+            ? BREAKOUT_TYPE_LABELS[item.breakoutType]
+            : item.status}
+        </span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+        <div className="rounded-2xl bg-slate-900/80 p-4">
+          <p className="text-slate-500">H1</p>
+          <p className="mt-2 font-semibold text-white">{formatPrice(item.h1Price)}</p>
+          <p className="mt-1 text-xs text-slate-500">{item.h1?.date ?? '等待確認'}</p>
+        </div>
+        <div className="rounded-2xl bg-slate-900/80 p-4">
+          <p className="text-slate-500">當根既有線價</p>
+          <p className="mt-2 font-semibold text-cyan-200">{formatPrice(item.linePrice)}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {item.h2 ? `H2 ${item.h2.date}` : '先判斷，後更新'}
+          </p>
+        </div>
+      </div>
+
+      {latestCandle && item.breakoutType ? (
+        <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/65 px-3 py-2 font-mono text-xs text-slate-300">
+          開 {formatPrice(latestCandle.open)} · 線 {formatPrice(item.linePrice)} · 收 {formatPrice(latestCandle.close)}
+        </div>
+      ) : null}
+
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+        <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(redCandle)}`}>
+          紅 K {redCandle ? '✓' : '—'}
+        </div>
+        <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(item.macdWeakening)}`}>
+          MACD {item.macdWeakening ? '✓' : '—'}
+        </div>
+        <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(item.dpoUpturn)}`}>
+          DPO {item.dpoUpturn ? '✓' : '—'}
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-4 text-xs text-slate-500">
+        <span>最近訊號</span>
+        <strong className="font-medium text-slate-300">{item.signalDate ?? '尚無'}</strong>
+      </div>
+    </Link>
+  );
+}
 
 export default function ScannerDashboard() {
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('全部');
-  const [sortOption, setSortOption] = useState<SortOption>('structure');
+  const [sortOption, setSortOption] = useState<SortOption>('signal');
+  const [activeSignalPage, setActiveSignalPage] = useState<SignalPage>('body-cross');
   const [version, setVersion] = useState(0);
 
+  const sourceStocks = useMemo(() => {
+    void version;
+    const snapshotStocks = getScannableSnapshotProfiles();
+    return snapshotStocks.length ? snapshotStocks : importedStocks;
+  }, [version]);
+
   const scanResults = useMemo(() => {
-    const snapshotStocks = verifiedCandidates
-      .map((candidate) => {
-        const candles = getMarketCandles(candidate.symbol, 'day', 'adjusted');
-        if (!candles?.length) return null;
-        return {
-          symbol: candidate.symbol,
-          name: candidate.name,
-          market: (candidate.exchange === 'TPEx' ? '上櫃' : '上市') as '上市' | '上櫃',
-          sector: candidate.sector,
-          candles: candles.map((item) => ({
-            date: item.time,
-            open: item.open,
-            high: item.high,
-            low: item.low,
-            close: item.close,
-            volume: item.volume
-          }))
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => Boolean(item));
-    const sourceStocks = snapshotStocks.length ? snapshotStocks : importedStocks;
-    const results = scanStocks(sourceStocks);
+    const results = scanStocks(sourceStocks, sourceStocks.length);
     const filtered =
       marketFilter === '全部'
         ? results
         : results.filter((item) => item.market === marketFilter);
 
     return filtered.slice().sort((left, right) => {
-      if (sortOption === 'structure') {
-        if (right.structureScore !== left.structureScore) {
-          return right.structureScore - left.structureScore;
-        }
-        return right.score - left.score;
+      if (sortOption === 'date') {
+        return (right.signalDate ?? '').localeCompare(left.signalDate ?? '');
       }
-      if (sortOption === 'majorTrendline') {
-        if (right.majorTrendline !== left.majorTrendline) {
-          return Number(right.majorTrendline) - Number(left.majorTrendline);
-        }
-        return right.score - left.score;
+      if (sortOption === 'h1') {
+        return (right.h1Index ?? -1) - (left.h1Index ?? -1);
       }
-      return right.score - left.score;
+      const confirmationOrder =
+        Number(right.closeConfirmation) - Number(left.closeConfirmation);
+      if (confirmationOrder !== 0) return confirmationOrder;
+      const warningOrder =
+        Number(right.intradayWarning) - Number(left.intradayWarning);
+      if (warningOrder !== 0) return warningOrder;
+      return (right.signalDate ?? '').localeCompare(left.signalDate ?? '');
     });
-  }, [marketFilter, sortOption, version]);
+  }, [marketFilter, sortOption, sourceStocks]);
 
-  const summary = useMemo(() => {
-    const topCandidate = scanResults[0];
-    return {
-      scanned: importedStocks.length,
-      hits: scanResults.length,
-      topSymbol: topCandidate?.symbol ?? '—',
-      topName: topCandidate?.name ?? '—',
-    };
-  }, [scanResults]);
+  const summary = useMemo(
+    () => ({
+      scanned: sourceStocks.length,
+      bodyCross: scanResults.filter(
+        (item) => item.closeConfirmation && item.breakoutType === 'body-cross'
+      ).length,
+      gapAbove: scanResults.filter(
+        (item) => item.closeConfirmation && item.breakoutType === 'gap-above'
+      ).length,
+      intradayOnly: scanResults.filter(
+        (item) => item.intradayWarning && !item.closeConfirmation
+      ).length
+    }),
+    [scanResults, sourceStocks.length]
+  );
+  const bodyCrossResults = scanResults.filter(
+    (item) => item.closeConfirmation && item.breakoutType === 'body-cross'
+  );
+  const gapAboveResults = scanResults.filter(
+    (item) => item.closeConfirmation && item.breakoutType === 'gap-above'
+  );
+  const intradayWarningResults = scanResults.filter(
+    (item) => item.intradayWarning && !item.closeConfirmation
+  );
+  const signalPages = [
+    {
+      id: 'body-cross',
+      title: '紅 K 實體穿越',
+      description: 'open ≤ 當根線價 < close；下降線確實穿過紅 K 實體。',
+      items: bodyCrossResults,
+      tone: 'text-rose-200'
+    },
+    {
+      id: 'gap-above',
+      title: '跳空紅 K 站上',
+      description: '當根線價 < open < close；開盤時已在線上方，實體沒有穿線。',
+      items: gapAboveResults,
+      tone: 'text-amber-200'
+    },
+    {
+      id: 'intraday-warning',
+      title: '盤中預警',
+      description: 'high 已穿越既有線且紅 K、MACD、DPO 成立，但 close 尚未站上線。',
+      items: intradayWarningResults,
+      tone: 'text-cyan-200'
+    }
+  ] satisfies Array<{
+    id: SignalPage;
+    title: string;
+    description: string;
+    items: ScanResultItem[];
+    tone: string;
+  }>;
+  const activePage = signalPages.find((page) => page.id === activeSignalPage)!;
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="rounded-3xl border border-slate-800 bg-slate-900/80 p-8 shadow-xl shadow-slate-950/40">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.35em] text-cyan-300/80">軍師雷達 Pro</p>
-              <h1 className="mt-3 text-4xl font-semibold text-white">下降趨勢結構雷達</h1>
-              <p className="mt-4 max-w-2xl text-slate-300">
-                以純趨勢線邏輯展示候選股結構，不包含舊版籌碼、MACD、嘎空或縮柱策略。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <select
-                value={marketFilter}
-                onChange={(event) => setMarketFilter(event.target.value as MarketFilter)}
-                className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200"
-              >
-                {marketFilterOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setVersion((value) => value + 1)}
-                className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm text-cyan-200 transition hover:bg-cyan-500/20"
-              >
-                重新掃描
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <section className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
-            <h2 className="text-xl font-semibold text-white">掃描摘要</h2>
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl bg-slate-950/70 p-4">
-                <p className="text-sm text-slate-400">匯入股票</p>
-                <p className="mt-2 text-2xl font-semibold text-white">{summary.scanned} 檔</p>
-              </div>
-              <div className="rounded-2xl bg-slate-950/70 p-4">
-                <p className="text-sm text-slate-400">命中標的</p>
-                <p className="mt-2 text-2xl font-semibold text-white">{summary.hits} 檔</p>
-              </div>
-              <div className="rounded-2xl bg-slate-950/70 p-4">
-                <p className="text-sm text-slate-400">首選候選</p>
-                <p className="mt-2 text-2xl font-semibold text-cyan-300">{summary.topSymbol}</p>
-                <p className="text-sm text-slate-400">{summary.topName}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
-            <h2 className="text-xl font-semibold text-white">篩選條件</h2>
-            <div className="mt-5 space-y-3 text-sm text-slate-300">
-              {['大級別下降趨勢線', '跟隨下降趨勢線', 'H3 成形', '空方動能衰退', '結構止損價格'].map(
-                (item) => (
-                  <div key={item} className="rounded-2xl bg-slate-950/70 px-4 py-3">
-                    {item}
-                  </div>
-                )
-              )}
-            </div>
-            <p className="mt-4 text-sm text-slate-400">
-              這僅是純趨勢線結構雷達，不包含舊版分類與策略。
+    <div className="flex flex-col gap-6">
+      <header className="rounded-3xl border border-slate-800 bg-slate-900/80 p-7 shadow-xl shadow-slate-950/30">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-[0.32em] text-cyan-300/80">
+              軍師雷達 Pro · H1 Tracker
+            </p>
+            <h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
+              下降趨勢線紅 K 穿越
+            </h1>
+            <p className="mt-4 max-w-3xl leading-7 text-slate-300">
+              H1 次根確認後立即連線；每根 K 先用既有線判斷，再於未觸發時接入當根 high。
+              訊號同根確認紅 K、MACD 負柱縮短與 DPO 上彎；收盤確認再依開盤價分為實體穿越與跳空站上。
             </p>
           </div>
-        </section>
-
-        <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/20">
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold text-white">掃描結果</h2>
-              <p className="mt-2 text-slate-400">顯示當前下降趨勢結構狀態。</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-                排序
-                <select
-                  value={sortOption}
-                  onChange={(event) => setSortOption(event.target.value as SortOption)}
-                  className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200"
-                >
-                  {sortOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+          <div className="flex flex-wrap gap-3">
+            <label className="sr-only" htmlFor="market-filter">市場</label>
+            <select
+              id="market-filter"
+              value={marketFilter}
+              onChange={(event) =>
+                setMarketFilter(event.target.value as MarketFilter)
+              }
+              className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200"
+            >
+              {marketFilterOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => setVersion((value) => value + 1)}
+              className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm text-cyan-200 transition hover:bg-cyan-500/20"
+              type="button"
+            >
+              重新掃描
+            </button>
           </div>
+        </div>
+      </header>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {scanResults.map((item) => (
-              <Link
-                key={item.symbol}
-                href={`/stocks/${item.symbol}`}
-                className="group block rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl shadow-slate-950/20 transition hover:-translate-y-0.5 hover:border-cyan-500/40"
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="掃描摘要">
+        {[
+          ['掃描股票', `${summary.scanned} 檔`],
+          ['紅 K 實體穿越', `${summary.bodyCross} 檔`],
+          ['跳空紅 K 站上', `${summary.gapAbove} 檔`],
+          ['盤中預警', `${summary.intradayOnly} 檔`],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">{label}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/20">
+        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-white">訊號分頁</h2>
+            <p className="mt-2 text-slate-400">
+              點選條件後，只顯示該條件成立的個股，不混入其他訊號或一般追蹤股。
+            </p>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+            排序
+            <select
+              value={sortOption}
+              onChange={(event) => setSortOption(event.target.value as SortOption)}
+              className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200"
+            >
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div
+          aria-label="訊號條件"
+          className="mb-7 grid gap-3 sm:grid-cols-3"
+          role="tablist"
+        >
+          {signalPages.map((page) => {
+            const active = page.id === activeSignalPage;
+            return (
+              <button
+                aria-controls="signal-results-panel"
+                aria-selected={active}
+                className={`rounded-2xl border px-4 py-4 text-left transition ${
+                  active
+                    ? 'border-cyan-400/60 bg-cyan-400/10 text-white shadow-lg shadow-cyan-950/20'
+                    : 'border-slate-700 bg-slate-950/55 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                }`}
+                id={`signal-tab-${page.id}`}
+                key={page.id}
+                onClick={() => setActiveSignalPage(page.id)}
+                role="tab"
+                type="button"
               >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="text-sm uppercase tracking-[0.35em] text-cyan-300/80">{item.market}</p>
-                    <h3 className="mt-2 text-xl font-semibold text-white">{item.symbol} {item.name}</h3>
-                  </div>
-                </div>
+                <span className="block text-sm font-semibold">{page.title}</span>
+                <strong className="mt-2 block text-2xl">{page.items.length} 檔</strong>
+              </button>
+            );
+          })}
+        </div>
 
-                <div className="mt-5 grid gap-3">
-                  <div className="rounded-2xl bg-slate-950/70 p-4 text-sm">
-                    <p className="text-slate-400">大級別下降趨勢線</p>
-                    <p className={`mt-2 font-semibold ${item.majorTrendline ? 'text-emerald-300' : 'text-slate-300'}`}>
-                      {item.majorTrendline ? '成立' : '未成立'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-slate-950/70 p-4 text-sm">
-                    <p className="text-slate-400">跟隨下降趨勢線</p>
-                    <p className={`mt-2 font-semibold ${item.followTrendline ? 'text-emerald-300' : 'text-slate-300'}`}>
-                      {item.followTrendline ? '成立' : '未成立'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-slate-950/70 p-4 text-sm">
-                    <p className="text-slate-400">H3 成形</p>
-                    <p className={`mt-2 font-semibold ${item.h3Formed ? 'text-emerald-300' : 'text-slate-300'}`}>
-                      {item.h3Formed ? '已成形' : '尚未成形'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-slate-950/70 p-4 text-sm">
-                    <p className="text-slate-400">空方動能衰退</p>
-                    <p className={`mt-2 font-semibold ${item.momentumDecay ? 'text-emerald-300' : 'text-slate-300'}`}>
-                      {item.momentumDecay ? '已衰退' : '未衰退'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-slate-950/70 p-4 text-sm">
-                    <p className="text-slate-400">結構止損價格</p>
-                    <p className="mt-2 font-semibold text-white">{item.stopLoss?.toFixed(2) ?? '—'}</p>
-                  </div>
-                </div>
-              </Link>
-            ))}
+        <section
+          aria-labelledby={`signal-tab-${activePage.id}`}
+          id="signal-results-panel"
+          role="tabpanel"
+        >
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className={`text-xl font-semibold ${activePage.tone}`}>
+                {activePage.title}
+              </h3>
+              <p className="mt-1 text-sm text-slate-400">{activePage.description}</p>
+            </div>
+            <strong className="text-sm text-slate-300">{activePage.items.length} 檔</strong>
           </div>
+
+          {activePage.items.length ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {activePage.items.map((item) => (
+                <ResultCard item={item} key={item.symbol} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-700 px-5 py-10 text-center text-sm text-slate-500">
+              本次掃描沒有符合「{activePage.title}」的股票。
+            </div>
+          )}
         </section>
-      </div>
-    </main>
+      </section>
+    </div>
   );
 }

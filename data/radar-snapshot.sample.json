@@ -1,0 +1,111 @@
+{
+  "meta": {
+    "dataAsOf": "2026-08-09",
+    "generatedAt": "2026-08-09T09:00:00.000Z",
+    "market": "TWSE+TPEx",
+    "mode": "sample",
+    "provider": "sample-data",
+    "sources": {
+      "notes": "local sample"
+    },
+    "limitations": {},
+    "universeStats": {
+      "discovered": 1000,
+      "capitalEligible": 200,
+      "volumeEligible": 150,
+      "analyzed": 2,
+      "failed": 0
+    }
+  },
+  "candidates": [
+    {
+      "symbol": "2330",
+      "name": "台積電",
+      "exchange": "TWSE",
+      "sector": "半導體",
+      "dataAsOf": "2026-08-09",
+      "currentPrice": 520.5,
+      "changePercent": 0.6,
+      "keyLevel": 500.0,
+      "stopLoss": 495.0,
+      "score": 78,
+      "structureScore": 16,
+      "structureGrade": "A級",
+      "trend": "空頭修正",
+      "reasons": ["空方動能衰退", "H3 後不再創新低"],
+      "structureState": "H3 成形",
+      "majorTrendline": true,
+      "followTrendline": true,
+      "h3Formed": true,
+      "h3Index": 34,
+      "momentumDecay": true,
+      "stopLoss": 495.0
+    },
+    {
+      "symbol": "2603",
+      "name": "長榮",
+      "exchange": "TWSE",
+      "sector": "航運",
+      "dataAsOf": "2026-08-09",
+      "currentPrice": 201.5,
+      "changePercent": 1.8,
+      "keyLevel": 183.0,
+      "stopLoss": 181.0,
+      "score": 64,
+      "structureScore": 9,
+      "structureGrade": "B級",
+      "trend": "觀察區間",
+      "reasons": ["跟隨下降趨勢線", "月線壓力未破"],
+      "structureState": "下降趨勢壓縮",
+      "majorTrendline": true,
+      "followTrendline": false,
+      "h3Formed": false,
+      "momentumDecay": false,
+      "stopLoss": 181.0
+    }
+  ],
+  "charts": {
+    "2330": {
+      "adjusted": {
+        "day": [
+          { "time": "2026-08-07", "open": 518, "high": 522, "low": 515, "close": 520, "volume": 1200000 },
+          { "time": "2026-08-08", "open": 520, "high": 523, "low": 519, "close": 520.5, "volume": 1100000 }
+        ],
+        "week": [
+          { "time": "2026-07-31", "open": 530, "high": 540, "low": 510, "close": 520, "volume": 6000000 }
+        ],
+        "month": [
+          { "time": "2026-07-01", "open": 600, "high": 620, "low": 480, "close": 520, "volume": 24000000 }
+        ]
+      },
+      "raw": {
+        "day": [],
+        "week": [],
+        "month": []
+      }
+    },
+    "2603": {
+      "adjusted": {
+        "day": [
+          { "time": "2026-08-07", "open": 199, "high": 203, "low": 198, "close": 201, "volume": 1800000 },
+          { "time": "2026-08-08", "open": 201, "high": 202, "low": 200, "close": 201.5, "volume": 1500000 }
+        ],
+        "week": [
+          { "time": "2026-07-31", "open": 210, "high": 215, "low": 195, "close": 201, "volume": 8000000 }
+        ],
+        "month": [
+          { "time": "2026-07-01", "open": 250, "high": 270, "low": 180, "close": 201, "volume": 32000000 }
+        ]
+      },
+      "raw": {
+        "day": [],
+        "week": [],
+        "month": []
+      }
+    }
+  },
+  "notes": {
+    "2330": { "dataAsOf": "2026-08-09", "historyDays": 1250 },
+    "2603": { "dataAsOf": "2026-08-09", "historyDays": 1250 }
+  }
+}

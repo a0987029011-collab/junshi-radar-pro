@@ -1,0 +1,40 @@
+# 軍師雷達每日市場快照規格
+
+## 目的
+
+`data/radar-snapshot.json` 只負責提供市場母體、個股基本資料、K 線與資料稽核資訊。H1 與「下降趨勢線紅 K 穿越」一律由目前的逐 K 掃描核心重新計算，不讀取快照內任何舊策略分數或分類。
+
+## 頂層結構
+
+- `meta`：資料日期、產生時間、來源、模式與母體統計。
+- `candidates`：股票代號、名稱、交易所與產業等來源 metadata。歷史快照可能仍含舊欄位，但目前掃描與 UI 不得使用。
+- `charts`：各股票的 adjusted／raw 日、週、月 K。
+- `notes`：逐檔資料日期、歷史範圍、公司行動與最新官方行情核對資訊。
+
+## K 線欄位
+
+```text
+time, open, high, low, close, volume, macd, signal, histogram, dpo
+```
+
+- 掃描首頁以 adjusted 日 K 執行全市場掃描。
+- 個股圖可切換日、週、月與 adjusted／raw，切換後依該組 K 線重新跑 H1 狀態機。
+- MACD 與 DPO 缺少時由指標模組計算；快照已有值時，圖表使用相同值顯示與稽核。
+
+## 即時掃描輸出
+
+`/api/radar` 與 `lib/scanEngine.ts` 使用固定提示名稱「下降趨勢線紅 K 穿越」，包含：
+
+- H1 索引、日期、價格與確認日期；
+- H2 索引、日期、價格、目前追蹤線與當根既有線價；
+- 盤中預警、收盤確認，以及收盤確認屬於 `body-cross`（紅 K 實體穿越）或 `gap-above`（開盤已在線上方）；
+- MACD weakening、DPO upturn；
+- signal date 與訊號是否發生在最新一根。
+
+完整逐 K 線段、評估紀錄與每輪通知紀錄由 `scanH1Trendline` 回傳，供圖表及測試稽核。API 只回傳目前狀態，避免傳送整段歷史追蹤資料。
+
+## 資料優先序
+
+1. 正式 `radar-snapshot.json` 有可用 K 線時使用正式快照。
+2. 只有正式快照不可用時，才使用 `lib/stockData.ts` 樣本作為 fallback。
+3. 舊版大級別結構、H3、A 級分類與相關分數即使仍存在歷史快照，也不得進入目前掃描或提示。

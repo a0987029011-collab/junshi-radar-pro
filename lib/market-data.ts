@@ -2,6 +2,7 @@ import radarSnapshotJson from "../data/radar-snapshot.json" with {
   type: "json"
 };
 import type { Candle, ScannedStock, Timeframe } from "./types";
+import type { CandlePoint, StockProfile } from "./stockData";
 
 export type PriceAdjustment = "adjusted" | "raw";
 
@@ -60,6 +61,37 @@ export const verifiedCandidates = snapshot.candidates;
 export const verifiedMarketSymbols = snapshot.candidates.map(
   (candidate) => candidate.symbol
 );
+
+function snapshotMarketToMarketLabel(exchange?: "TWSE" | "TPEx") {
+  return exchange === "TPEx" ? "上櫃" : "上市";
+}
+
+function normalizedCandles(candles: Candle[] | null): CandlePoint[] {
+  return (candles ?? []).map((item) => ({
+    date: item.time,
+    open: item.open,
+    high: item.high,
+    low: item.low,
+    close: item.close,
+    volume: item.volume
+  }));
+}
+
+export function getScannableSnapshotProfiles(): StockProfile[] {
+  return verifiedCandidates
+    .map((candidate) => {
+      const candles = getMarketCandles(candidate.symbol, "day", "adjusted");
+      if (!candles?.length) return null;
+      return {
+        symbol: candidate.symbol,
+        name: candidate.name,
+        market: snapshotMarketToMarketLabel(candidate.exchange),
+        sector: candidate.sector,
+        candles: normalizedCandles(candles)
+      };
+    })
+    .filter((item): item is StockProfile => Boolean(item));
+}
 
 export function getMarketCandles(
   symbol: string,

@@ -65,10 +65,15 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /只打最漂亮的第一槍/);
-  assert.match(html, /萬海/);
+  assert.match(html, /下降趨勢線紅 K 穿越/);
   assert.match(html, /上市櫃盤後/);
-  assert.match(html, /全市場候選排行榜/);
+  assert.match(html, /訊號分頁/);
+  assert.match(html, /紅 K 實體穿越/);
+  assert.match(html, /跳空紅 K 站上/);
+  assert.match(html, /當根既有線價/);
+  assert.match(html, /DPO/);
+  assert.doesNotMatch(html, /H3 成形/);
+  assert.doesNotMatch(html, /A 級雷達/);
   assert.doesNotMatch(html, /MOCK DATA/);
   assert.doesNotMatch(html, /codex-preview/);
 });

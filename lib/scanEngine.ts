@@ -1,249 +1,397 @@
+import { calculateDpo, calculateMacd } from './indicators.ts';
 import type { CandlePoint, StockProfile } from './stockData.ts';
-import { calculateMacd } from './indicators.ts';
-import { fitDescendingTrendline } from './scanner-engine.ts';
+
+export const BREAKOUT_SIGNAL_NAME = '下降趨勢線紅 K 穿越';
+
+export type BreakoutType = 'body-cross' | 'gap-above';
+
+export const BREAKOUT_TYPE_LABELS: Record<BreakoutType, string> = {
+  'body-cross': '紅 K 實體穿越',
+  'gap-above': '跳空紅 K 站上'
+};
+
+export interface H1Point {
+  roundId: number;
+  index: number;
+  date: string;
+  price: number;
+  confirmedIndex: number;
+  confirmedDate: string;
+}
+
+export interface H2Point {
+  roundId: number;
+  index: number;
+  date: string;
+  price: number;
+}
+
+export interface TrackingLineSegment {
+  roundId: number;
+  h1Index: number;
+  h1Date: string;
+  startPrice: number;
+  endIndex: number;
+  endDate: string;
+  endPrice: number;
+  slope: number;
+}
+
+export interface TrendlineEvaluation {
+  roundId: number;
+  index: number;
+  date: string;
+  h1Index: number;
+  sourceEndIndex: number;
+  linePrice: number;
+  highCrossed: boolean;
+  closeCrossed: boolean;
+  bodyCrossed: boolean;
+  gapAboveLine: boolean;
+  breakoutType?: BreakoutType;
+  redCandle: boolean;
+  macdWeakening: boolean;
+  dpoUpturn: boolean;
+  intradayWarning: boolean;
+  closeConfirmation: boolean;
+  updatedWithHigh: boolean;
+  resetH1Candidate: boolean;
+}
+
+export interface TrendlineSignal extends TrendlineEvaluation {
+  name: typeof BREAKOUT_SIGNAL_NAME;
+}
+
+export interface H1TrendlineScan {
+  h1Points: H1Point[];
+  lineSegments: TrackingLineSegment[];
+  evaluations: TrendlineEvaluation[];
+  signals: TrendlineSignal[];
+  activeH1?: H1Point;
+  currentLine?: TrackingLineSegment;
+  currentLinePrice?: number;
+  latestEvaluation?: TrendlineEvaluation;
+}
+
+export interface IndicatorInput {
+  macdHistogram?: number[];
+  dpo?: number[];
+}
 
 export interface ScanResultItem extends StockProfile {
-  score: number;
-  structureScore: number;
-  structureGrade: 'A級' | 'B級' | '觀察級';
-  trend: string;
-  reasons: string[];
+  signalName: typeof BREAKOUT_SIGNAL_NAME;
+  status: '收盤確認' | '盤中預警' | '追蹤中' | '等待 H1';
   latestClose: number;
   latestVolume: number;
-  majorTrendline: boolean;
-  followTrendline: boolean;
-  h3Formed: boolean;
-  h3Index?: number;
-  momentumDecay: boolean;
-  structureState: string;
-  stopLoss?: number;
+  h1?: H1Point;
+  h1Index?: number;
+  h1Price?: number;
+  h2?: H2Point;
+  h2Index?: number;
+  h2Price?: number;
+  lineSegments: TrackingLineSegment[];
+  evaluations: TrendlineEvaluation[];
+  currentLine?: TrackingLineSegment;
+  linePrice?: number;
+  intradayWarning: boolean;
+  closeConfirmation: boolean;
+  breakoutType?: BreakoutType;
+  macdWeakening: boolean;
+  dpoUpturn: boolean;
+  signalDate?: string;
+  signalOnLatestBar: boolean;
+  signals: TrendlineSignal[];
+}
+
+function lineFromH1(
+  h1: H1Point,
+  candle: CandlePoint,
+  endIndex: number
+): TrackingLineSegment {
+  return {
+    roundId: h1.roundId,
+    h1Index: h1.index,
+    h1Date: h1.date,
+    startPrice: h1.price,
+    endIndex,
+    endDate: candle.date,
+    endPrice: candle.high,
+    slope: (candle.high - h1.price) / (endIndex - h1.index)
+  };
+}
+
+export function priceOnTrackingLine(
+  line: TrackingLineSegment,
+  index: number
+) {
+  return line.startPrice + line.slope * (index - line.h1Index);
+}
+
+export function isMacdWeakening(histogram: number[], index: number) {
+  if (index < 1) return false;
+  const previous = histogram[index - 1];
+  const current = histogram[index];
+  return (
+    Number.isFinite(previous) &&
+    Number.isFinite(current) &&
+    previous < 0 &&
+    current < 0 &&
+    Math.abs(current) < Math.abs(previous)
+  );
+}
+
+export function isDpoUpturn(dpo: number[], index: number) {
+  if (index < 2) return false;
+  const beforeLow = dpo[index - 2];
+  const low = dpo[index - 1];
+  const current = dpo[index];
+  return (
+    Number.isFinite(beforeLow) &&
+    Number.isFinite(low) &&
+    Number.isFinite(current) &&
+    low <= beforeLow &&
+    current > low
+  );
+}
+
+/**
+ * Walks candles from left to right. The current candle is always evaluated
+ * against the line that existed after the previous candle. Its high is only
+ * added after the evaluation and only when the line did not signal.
+ */
+export function scanH1Trendline(
+  candles: CandlePoint[],
+  indicatorInput: IndicatorInput = {}
+): H1TrendlineScan {
+  const closes = candles.map((candle) => candle.close);
+  const macdHistogram =
+    indicatorInput.macdHistogram ?? calculateMacd(closes).histogram;
+  const dpo = indicatorInput.dpo ?? calculateDpo(closes);
+
+  const h1Points: H1Point[] = [];
+  const lineSegments: TrackingLineSegment[] = [];
+  const evaluations: TrendlineEvaluation[] = [];
+  const signals: TrendlineSignal[] = [];
+
+  let candidateIndex: number | undefined;
+  let activeH1: H1Point | undefined;
+  let currentLine: TrackingLineSegment | undefined;
+  let roundId = 0;
+  const notifiedLineKeys = new Set<string>();
+
+  for (let index = 0; index < candles.length; index += 1) {
+    const candle = candles[index];
+
+    if (!activeH1 || !currentLine) {
+      if (candidateIndex === undefined) {
+        const previousH1 = h1Points.at(-1);
+        if (previousH1 && candle.high <= previousH1.price) {
+          continue;
+        }
+        candidateIndex = index;
+        continue;
+      }
+
+      if (candle.high > candles[candidateIndex].high) {
+        candidateIndex = index;
+        continue;
+      }
+
+      roundId += 1;
+      activeH1 = {
+        roundId,
+        index: candidateIndex,
+        date: candles[candidateIndex].date,
+        price: candles[candidateIndex].high,
+        confirmedIndex: index,
+        confirmedDate: candle.date
+      };
+      h1Points.push(activeH1);
+      currentLine = lineFromH1(activeH1, candle, index);
+      lineSegments.push(currentLine);
+      candidateIndex = undefined;
+      continue;
+    }
+
+    // Important: this price is derived exclusively from data through index - 1.
+    const linePrice = priceOnTrackingLine(currentLine, index);
+    const highCrossed = candle.high > linePrice;
+    const closeCrossed = candle.close > linePrice;
+    const bodyCrossed = candle.open <= linePrice && closeCrossed;
+    const gapAboveLine = candle.open > linePrice && closeCrossed;
+    const redCandle = candle.close > candle.open;
+    const macdWeakening = isMacdWeakening(macdHistogram, index);
+    const dpoUpturn = isDpoUpturn(dpo, index);
+    const lineKey = `${activeH1.roundId}:${currentLine.endIndex}`;
+    const lineAlreadyNotified = notifiedLineKeys.has(lineKey);
+    const intradayWarning =
+      !lineAlreadyNotified &&
+      highCrossed &&
+      redCandle &&
+      macdWeakening &&
+      dpoUpturn;
+    const closeConfirmation =
+      !lineAlreadyNotified &&
+      closeCrossed &&
+      redCandle &&
+      macdWeakening &&
+      dpoUpturn;
+    const breakoutType: BreakoutType | undefined = closeConfirmation
+      ? bodyCrossed
+        ? 'body-cross'
+        : 'gap-above'
+      : undefined;
+    const resetH1Candidate =
+      !intradayWarning && candle.high > activeH1.price;
+    const evaluation: TrendlineEvaluation = {
+      roundId: activeH1.roundId,
+      index,
+      date: candle.date,
+      h1Index: activeH1.index,
+      sourceEndIndex: currentLine.endIndex,
+      linePrice,
+      highCrossed,
+      closeCrossed,
+      bodyCrossed,
+      gapAboveLine,
+      breakoutType,
+      redCandle,
+      macdWeakening,
+      dpoUpturn,
+      intradayWarning,
+      closeConfirmation,
+      updatedWithHigh: !intradayWarning && !resetH1Candidate,
+      resetH1Candidate
+    };
+    evaluations.push(evaluation);
+
+    if (intradayWarning) {
+      signals.push({ ...evaluation, name: BREAKOUT_SIGNAL_NAME });
+      // This exact H1-H2 line can notify only once. H1 remains active; the
+      // following candle still judges against the pre-existing line before H2
+      // can advance again.
+      notifiedLineKeys.add(lineKey);
+      continue;
+    }
+
+    if (resetH1Candidate) {
+      // The old line was evaluated first. A higher high starts the next H1
+      // candidate only after that no-look-ahead evaluation has completed.
+      candidateIndex = index;
+      activeH1 = undefined;
+      currentLine = undefined;
+      continue;
+    }
+
+    // Update only after the current candle has been judged with the old line.
+    currentLine = lineFromH1(activeH1, candle, index);
+    lineSegments.push(currentLine);
+  }
+
+  const latestEvaluation = evaluations.at(-1);
+  const lastIndex = candles.length - 1;
+  const currentLinePrice =
+    latestEvaluation?.index === lastIndex
+      ? latestEvaluation.linePrice
+      : currentLine && lastIndex >= 0
+        ? priceOnTrackingLine(currentLine, lastIndex)
+        : undefined;
+
+  return {
+    h1Points,
+    lineSegments,
+    evaluations,
+    signals,
+    activeH1,
+    currentLine,
+    currentLinePrice,
+    latestEvaluation
+  };
 }
 
 export function scanStock(stock: StockProfile): ScanResultItem {
-  return scanStocks([stock], 1)[0];
+  const trace = scanH1Trendline(stock.candles);
+  const lastIndex = stock.candles.length - 1;
+  const currentEvaluation =
+    trace.latestEvaluation?.index === lastIndex
+      ? trace.latestEvaluation
+      : undefined;
+  const latestSignal = trace.signals.at(-1);
+  const signalOnLatestBar = latestSignal?.index === lastIndex;
+  const h1 = trace.activeH1 ?? trace.h1Points.at(-1);
+  const h2 = trace.currentLine
+    ? {
+        roundId: trace.currentLine.roundId,
+        index: trace.currentLine.endIndex,
+        date: trace.currentLine.endDate,
+        price: trace.currentLine.endPrice
+      }
+    : undefined;
+  const intradayWarning = Boolean(
+    currentEvaluation?.intradayWarning && signalOnLatestBar
+  );
+  const closeConfirmation = Boolean(
+    currentEvaluation?.closeConfirmation && signalOnLatestBar
+  );
+
+  return {
+    ...stock,
+    signalName: BREAKOUT_SIGNAL_NAME,
+    status: closeConfirmation
+      ? '收盤確認'
+      : intradayWarning
+        ? '盤中預警'
+        : trace.currentLine
+          ? '追蹤中'
+          : '等待 H1',
+    latestClose: stock.candles.at(-1)?.close ?? 0,
+    latestVolume: stock.candles.at(-1)?.volume ?? 0,
+    h1,
+    h1Index: h1?.index,
+    h1Price: h1?.price,
+    h2,
+    h2Index: h2?.index,
+    h2Price: h2?.price,
+    lineSegments: trace.lineSegments,
+    evaluations: trace.evaluations,
+    currentLine: trace.currentLine,
+    linePrice: trace.currentLinePrice,
+    intradayWarning,
+    closeConfirmation,
+    breakoutType: signalOnLatestBar ? latestSignal?.breakoutType : undefined,
+    macdWeakening: currentEvaluation?.macdWeakening ?? false,
+    dpoUpturn: currentEvaluation?.dpoUpturn ?? false,
+    signalDate: latestSignal?.date,
+    signalOnLatestBar,
+    signals: trace.signals
+  };
 }
 
-function average(values: number[]) {
-  if (!values.length) {
-    return 0;
-  }
-
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function findSwingLowIndexes(candles: CandlePoint[], radius = 2) {
-  const indexes: number[] = [];
-  for (let index = radius; index < candles.length - radius; index += 1) {
-    const window = candles.slice(index - radius, index + radius + 1);
-    if (candles[index].low === Math.min(...window.map((item) => item.low))) {
-      indexes.push(index);
-    }
-  }
-  return indexes;
-}
-
-function slope(values: number[]) {
-  if (values.length < 2) {
-    return 0;
-  }
-
-  const start = values[0];
-  const end = values[values.length - 1];
-  return (end - start) / Math.max(1, values.length - 1);
-}
-
-function rangeTolerance(candles: CandlePoint[]) {
-  const highs = candles.map((candle) => candle.high);
-  const lows = candles.map((candle) => candle.low);
-  return Math.max((Math.max(...highs) - Math.min(...lows)) * 0.02, 0.1);
-}
-
-function trendlineCoversCandles(
-  line: { slope: number; intercept: number },
-  candles: CandlePoint[],
-  tolerance: number,
-  useClose = false
-) {
-  return candles.every((candle, index) => {
-    const linePrice = line.intercept + line.slope * index;
-    const value = useClose ? candle.close : candle.high;
-    return value <= linePrice + tolerance;
-  });
-}
-
-function isValidTrendlineWithinAnchorRange(
-  line: { slope: number; intercept: number; touchIndexes: number[] },
-  candles: CandlePoint[],
-  tolerance: number
-) {
-  const lastTouch = line.touchIndexes.at(-1)!;
-  return candles
-    .slice(0, lastTouch + 1)
-    .every((candle, index) => {
-      const linePrice = line.intercept + line.slope * index;
-      return candle.high <= linePrice + tolerance;
-    });
-}
-
-function stoppedMakingNewLows(swingLowIndexes: number[], candles: CandlePoint[]) {
-  if (swingLowIndexes.length < 2) return false;
-
-  const recent = swingLowIndexes
-    .slice(-3)
-    .map((index) => candles[index].low);
-
-  return recent.length >= 2 && recent.at(-1)! >= recent.at(-2)!;
-}
-
-function bearishMomentumDecay(macdHistogram: number[], closes: number[]) {
-  const recent = macdHistogram.filter(Number.isFinite).slice(-3);
-  const hasShrinkingNegative =
-    recent.length >= 3 &&
-    recent.every((value) => value < 0) &&
-    Math.abs(recent[2]) < Math.abs(recent[1]) &&
-    Math.abs(recent[1]) < Math.abs(recent[0]);
-
-  const recentCloses = closes.slice(-8);
-  const slopeValue = slope(recentCloses);
-  const slopeFlattening = slopeValue > -0.008;
-
-  return hasShrinkingNegative && slopeFlattening;
-}
-
-function pickStructuralStopLoss(candles: CandlePoint[]) {
-  const swingLowIndexes = findSwingLowIndexes(candles, 2);
-  if (swingLowIndexes.length >= 1) {
-    return candles[swingLowIndexes.at(-1)!].low;
-  }
-  return Math.min(...candles.slice(-8).map((candle) => candle.low));
-}
-
-export function scanStocks(stocks: StockProfile[], limit = 8): ScanResultItem[] {
+export function scanStocks(
+  stocks: StockProfile[],
+  limit = 8
+): ScanResultItem[] {
   return stocks
-    .map((stock) => {
-      const closes = stock.candles.map((candle) => candle.close);
-      const latestClose = closes.at(-1) ?? 0;
-      const latestVolume = stock.candles.at(-1)?.volume ?? 0;
-      const macd = calculateMacd(closes);
-      const chartTolerance = rangeTolerance(stock.candles);
-      const swingLowIndexes = findSwingLowIndexes(stock.candles, 2);
-      const structuralStopLoss = pickStructuralStopLoss(stock.candles);
-      const largeTrendline = fitDescendingTrendline(stock.candles, 2);
-      const followCandles = stock.candles.slice(Math.max(0, stock.candles.length - 28));
-      const followTrendline = followCandles.length >= 6 ? fitDescendingTrendline(followCandles, 2) : null;
-
-      const reasons: string[] = [];
-      let score = 30;
-
-      const majorLineValid =
-        largeTrendline &&
-        largeTrendline.slope < 0 &&
-        isValidTrendlineWithinAnchorRange(
-          largeTrendline,
-          stock.candles,
-          chartTolerance
-        );
-
-      if (majorLineValid) {
-        reasons.push('大級別下降趨勢線');
-        score += 25;
+    .map(scanStock)
+    .sort((left, right) => {
+      if (right.closeConfirmation !== left.closeConfirmation) {
+        return Number(right.closeConfirmation) - Number(left.closeConfirmation);
       }
-
-      const followLineValid =
-        followTrendline &&
-        followTrendline.slope < 0 &&
-        isValidTrendlineWithinAnchorRange(
-          followTrendline,
-          followCandles,
-          chartTolerance * 1.4
-        );
-
-      if (followLineValid) {
-        reasons.push('跟隨下降趨勢線');
-        score += 20;
+      if (right.breakoutType !== left.breakoutType) {
+        if (right.breakoutType === 'body-cross') return 1;
+        if (left.breakoutType === 'body-cross') return -1;
       }
-
-      const h3AfterNoNewLow = stoppedMakingNewLows(swingLowIndexes, stock.candles);
-      if (h3AfterNoNewLow) {
-        reasons.push('H3 後不再創新低');
-        score += 18;
+      if (right.intradayWarning !== left.intradayWarning) {
+        return Number(right.intradayWarning) - Number(left.intradayWarning);
       }
-
-      const momentumDecay = bearishMomentumDecay(macd.histogram, closes);
-      const noNewLowAfterStructure = swingLowIndexes.length >= 2 &&
-        stock.candles[swingLowIndexes.at(-1)!].low >= stock.candles[swingLowIndexes.at(-2)!].low;
-
-      let structureScore = 0;
-
-      if (momentumDecay && noNewLowAfterStructure) {
-        reasons.push('空方動能衰退');
-        score += 18;
-        structureScore += 6;
+      if (right.signalOnLatestBar !== left.signalOnLatestBar) {
+        return Number(right.signalOnLatestBar) - Number(left.signalOnLatestBar);
       }
-
-      if (h3AfterNoNewLow) {
-        reasons.push('H3 後不再創新低');
-        score += 18;
-        structureScore += 6;
-      }
-
-      if (majorLineValid) {
-        structureScore += 4;
-      }
-
-      if (followLineValid) {
-        structureScore += 4;
-      }
-
-      if (majorLineValid && followLineValid) {
-        structureScore += 2;
-      }
-
-      structureScore = Math.min(20, structureScore);
-      const structureGrade:
-        | 'A級'
-        | 'B級'
-        | '觀察級' = structureScore >= 15
-        ? 'A級'
-        : structureScore >= 8
-        ? 'B級'
-        : '觀察級';
-
-      let structureState = '結構破壞';
-      if (majorLineValid && followLineValid) {
-        structureState = '下降趨勢中';
-      } else if (majorLineValid && !followLineValid) {
-        structureState = '下降趨勢壓縮';
-      } else if (momentumDecay) {
-        structureState = '空方動能衰退';
-      } else if (h3AfterNoNewLow) {
-        structureState = 'H3 成形';
-      }
-
-      if (reasons.length === 0) {
-        reasons.push('觀察中');
-      }
-
-      const trend = score >= 80 ? '強勢空頭反轉' : score >= 60 ? '空頭修正' : '觀察區間';
-
-      return {
-        ...stock,
-        score: Math.min(100, score),
-        structureScore,
-        structureGrade,
-        trend,
-        reasons,
-        latestClose,
-        latestVolume,
-        majorTrendline: Boolean(majorLineValid),
-        followTrendline: Boolean(followLineValid),
-        h3Formed: h3AfterNoNewLow,
-        h3Index: h3AfterNoNewLow ? swingLowIndexes.at(-1) : undefined,
-        momentumDecay,
-        structureState,
-        stopLoss: structuralStopLoss,
-      };
+      const dateOrder = (right.signalDate ?? '').localeCompare(
+        left.signalDate ?? ''
+      );
+      if (dateOrder !== 0) return dateOrder;
+      return (right.h1Index ?? -1) - (left.h1Index ?? -1);
     })
-    .sort((left, right) => right.score - left.score)
     .slice(0, limit);
 }

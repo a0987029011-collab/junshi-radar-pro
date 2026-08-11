@@ -7,14 +7,15 @@ import {
   getMarketDataNote,
   type PriceAdjustment
 } from "../lib/market-data";
-import { fitDescendingTrendline } from "../lib/scanner-engine";
-import type {
-  Candle,
-  MonthlyStructurePlan,
-  ProfitPlan,
-  StructureTrendline,
-  Timeframe
-} from "../lib/types";
+import {
+  BREAKOUT_SIGNAL_NAME,
+  BREAKOUT_TYPE_LABELS,
+  priceOnTrackingLine,
+  scanH1Trendline,
+  type H1TrendlineScan,
+  type TrackingLineSegment
+} from "../lib/scanEngine";
+import type { Candle, Timeframe } from "../lib/types";
 
 const timeframeLabels: { value: Timeframe; label: string }[] = [
   { value: "day", label: "日 K" },
@@ -22,250 +23,91 @@ const timeframeLabels: { value: Timeframe; label: string }[] = [
   { value: "month", label: "月 K" }
 ];
 
+const DEFAULT_VISIBLE_BARS = 180;
+const MIN_VISIBLE_BARS = 30;
+const priceFormatter = new Intl.NumberFormat("zh-TW", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+function formatPrice(value: number) {
+  return priceFormatter.format(value);
+}
+
 function drawChart(
   canvas: HTMLCanvasElement,
   candles: Candle[],
-  keyLevel: number,
-  profitPlan?: ProfitPlan,
-  monthlyStructure?: MonthlyStructurePlan,
-  showMonthlyStructure = false
+  trace: H1TrendlineScan,
+  requestedVisibleBars: number,
+  inspectedIndex?: number
 ) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, rect.width * ratio);
   canvas.height = Math.max(1, rect.height * ratio);
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !candles.length) return;
   ctx.scale(ratio, ratio);
 
   const width = rect.width;
   const height = rect.height;
-  const pad = { left: 12, right: 54, top: 20, bottom: 16 };
-  const priceHeight = height * 0.44;
-  const volumeTop = priceHeight + 10;
+  const pad = { left: 12, right: 58, top: 20, bottom: 16 };
+  const priceBottom = height * 0.48;
+  const volumeTop = priceBottom + 8;
   const volumeHeight = height * 0.08;
   const macdTop = volumeTop + volumeHeight + 22;
-  const macdHeight = height * 0.2;
+  const macdHeight = height * 0.19;
   const dpoTop = macdTop + macdHeight + 18;
   const dpoHeight = height - dpoTop - pad.bottom;
   const chartWidth = width - pad.left - pad.right;
-  const planPrices = profitPlan && !showMonthlyStructure
-    ? [
-        profitPlan.entryZoneLow,
-        profitPlan.entryZoneHigh,
-        profitPlan.stopLoss,
-        profitPlan.profitZoneLow,
-        profitPlan.profitZoneHigh
-      ].filter((value): value is number => value != null)
-    : [];
-  const structurePrices =
-    showMonthlyStructure && monthlyStructure
-      ? [
-          monthlyStructure.keySupport,
-          monthlyStructure.targetZoneLow,
-          monthlyStructure.targetZoneHigh,
-          monthlyStructure.majorTrendline?.startPrice,
-          monthlyStructure.majorTrendline?.endPrice,
-          monthlyStructure.followerTrendline?.endPrice
-        ].filter((value): value is number => value != null)
-      : [];
-  const maxPrice =
-    Math.max(
-      ...candles.map((item) => item.high),
-      ...planPrices,
-      ...structurePrices
-    ) * 1.015;
-  const minPrice =
-    Math.min(
-      ...candles.map((item) => item.low),
-      ...planPrices,
-      ...structurePrices
-    ) * 0.985;
-  const maxVolume = Math.max(...candles.map((item) => item.volume));
-  const xStep = chartWidth / candles.length;
-  const candleWidth = Math.max(2, xStep * 0.58);
-  const toX = (index: number) => pad.left + xStep * index + xStep / 2;
+  const visibleCount = Math.min(
+    candles.length,
+    Math.max(MIN_VISIBLE_BARS, requestedVisibleBars)
+  );
+  const viewStart = candles.length - visibleCount;
+  const viewEnd = candles.length - 1;
+  const visibleCandles = candles.slice(viewStart);
+  const highs = visibleCandles.map((candle) => candle.high);
+  const lows = visibleCandles.map((candle) => candle.low);
+  const range = Math.max(...highs) - Math.min(...lows) || 1;
+  const maxPrice = Math.max(...highs) + range * 0.06;
+  const minPrice = Math.min(...lows) - range * 0.04;
+  const maxVolume = Math.max(1, ...visibleCandles.map((candle) => candle.volume));
+  const xStep = chartWidth / visibleCount;
+  const candleWidth = Math.max(1.5, xStep * 0.58);
+  const toX = (index: number) =>
+    pad.left + xStep * (index - viewStart) + xStep / 2;
   const toPriceY = (value: number) =>
     pad.top +
-    ((maxPrice - value) / (maxPrice - minPrice)) *
-      (priceHeight - pad.top);
+    ((maxPrice - value) / (maxPrice - minPrice)) * (priceBottom - pad.top);
 
   ctx.fillStyle = "#090e13";
   ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "#18212b";
   ctx.lineWidth = 1;
   ctx.font = "10px Consolas, monospace";
-  ctx.fillStyle = "#5f6c79";
 
-  for (let i = 0; i <= 4; i += 1) {
-    const y = pad.top + ((priceHeight - pad.top) / 4) * i;
+  for (let gridIndex = 0; gridIndex <= 4; gridIndex += 1) {
+    const y = pad.top + ((priceBottom - pad.top) / 4) * gridIndex;
     ctx.beginPath();
     ctx.moveTo(pad.left, y);
     ctx.lineTo(width - pad.right, y);
     ctx.stroke();
-    const label = maxPrice - ((maxPrice - minPrice) / 4) * i;
-    ctx.fillText(
-      label.toFixed(label >= 100 ? 1 : 2),
-      width - pad.right + 7,
-      y + 3
-    );
+    const label = maxPrice - ((maxPrice - minPrice) / 4) * gridIndex;
+    ctx.fillStyle = "#5f6c79";
+    ctx.fillText(label.toFixed(label >= 100 ? 1 : 2), width - pad.right + 7, y + 3);
   }
 
-  if (showMonthlyStructure && monthlyStructure) {
-    const drawStructureTrendline = (
-      line: StructureTrendline | null,
-      color: string,
-      label: string,
-      dash: number[] = []
-    ) => {
-      if (!line) return;
-      const firstIndex = candles.findIndex(
-        (candle) => candle.time === line.startTime
-      );
-      const secondIndex = candles.findIndex(
-        (candle) => candle.time === line.endTime
-      );
-      if (firstIndex < 0 || secondIndex <= firstIndex) return;
-      const slope =
-        (line.endPrice - line.startPrice) / (secondIndex - firstIndex);
-      const endIndex = candles.length - 1;
-      const endPrice =
-        line.startPrice + slope * (endIndex - firstIndex);
-      ctx.setLineDash(dash);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(toX(firstIndex), toPriceY(line.startPrice));
-      ctx.lineTo(toX(endIndex), toPriceY(endPrice));
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = color;
-      ctx.fillText(label, toX(firstIndex) + 5, toPriceY(line.startPrice) - 7);
-      [firstIndex, secondIndex].forEach((index) => {
-        const price =
-          line.startPrice + slope * (index - firstIndex);
-        ctx.beginPath();
-        ctx.arc(toX(index), toPriceY(price), 3.2, 0, Math.PI * 2);
-        ctx.fill();
-      });
-    };
-
-    drawStructureTrendline(
-      monthlyStructure.majorTrendline,
-      "#b797ff",
-      "月線主壓"
-    );
-    drawStructureTrendline(
-      monthlyStructure.followerTrendline,
-      "#77a7ff",
-      "跟隨線",
-      [5, 4]
-    );
-
-    if (monthlyStructure.keySupport != null) {
-      const supportY = toPriceY(monthlyStructure.keySupport);
-      ctx.strokeStyle = "#f6bd4b";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(pad.left, supportY);
-      ctx.lineTo(width - pad.right, supportY);
-      ctx.stroke();
-      ctx.fillStyle = "#f6bd4b";
-      ctx.fillText(
-        `縮柱支撐 ${monthlyStructure.keySupport}`,
-        pad.left + 6,
-        supportY - 6
-      );
-    }
-
-    if (
-      monthlyStructure.targetZoneLow != null &&
-      monthlyStructure.targetZoneHigh != null
-    ) {
-      const top = toPriceY(monthlyStructure.targetZoneHigh);
-      const bottom = toPriceY(monthlyStructure.targetZoneLow);
-      ctx.fillStyle = "rgba(46, 214, 155, .1)";
-      ctx.fillRect(
-        pad.left,
-        top,
-        chartWidth,
-        Math.max(2, bottom - top)
-      );
-      ctx.strokeStyle = "#2ed69b";
-      ctx.strokeRect(
-        pad.left,
-        top,
-        chartWidth,
-        Math.max(2, bottom - top)
-      );
-      ctx.fillStyle = "#2ed69b";
-      ctx.fillText(
-        `月線目標 ${monthlyStructure.targetZoneLow}–${monthlyStructure.targetZoneHigh}`,
-        pad.left + 6,
-        top + 12
-      );
-    }
-  }
-
-  if (profitPlan && !showMonthlyStructure) {
-    const zoneX = pad.left + chartWidth * 0.55;
-    const zoneWidth = width - pad.right - zoneX;
-    const drawZone = (
-      low: number,
-      high: number,
-      fill: string,
-      stroke: string,
-      label: string
-    ) => {
-      const top = toPriceY(high);
-      const bottom = toPriceY(low);
-      ctx.fillStyle = fill;
-      ctx.fillRect(zoneX, top, zoneWidth, Math.max(2, bottom - top));
-      ctx.strokeStyle = stroke;
-      ctx.strokeRect(zoneX, top, zoneWidth, Math.max(2, bottom - top));
-      ctx.fillStyle = stroke;
-      ctx.fillText(label, zoneX + 6, top + 12);
-    };
-    drawZone(
-      profitPlan.entryZoneLow,
-      profitPlan.entryZoneHigh,
-      "rgba(119, 167, 255, .13)",
-      "#77a7ff",
-      `進場 ${profitPlan.entryZoneLow}–${profitPlan.entryZoneHigh}`
-    );
-    if (
-      profitPlan.profitZoneLow != null &&
-      profitPlan.profitZoneHigh != null
-    ) {
-      drawZone(
-        profitPlan.profitZoneLow,
-        profitPlan.profitZoneHigh,
-        "rgba(46, 214, 155, .13)",
-        "#2ed69b",
-        `獲利 ${profitPlan.profitZoneLow}–${profitPlan.profitZoneHigh}`
-      );
-    }
-    const stopY = toPriceY(profitPlan.stopLoss);
-    ctx.setLineDash([3, 4]);
-    ctx.strokeStyle = "#ff5864";
-    ctx.beginPath();
-    ctx.moveTo(zoneX, stopY);
-    ctx.lineTo(width - pad.right, stopY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = "#ff5864";
-    ctx.fillText(`停損 ${profitPlan.stopLoss}`, zoneX + 6, stopY - 5);
-  }
-
-  candles.forEach((candle, index) => {
+  visibleCandles.forEach((candle, offset) => {
+    const index = viewStart + offset;
     const x = toX(index);
     const openY = toPriceY(candle.open);
     const closeY = toPriceY(candle.close);
     const highY = toPriceY(candle.high);
     const lowY = toPriceY(candle.low);
-    const up = candle.close >= candle.open;
-    ctx.strokeStyle = up ? "#ff5864" : "#2ed69b";
-    ctx.fillStyle = up ? "#ff5864" : "#2ed69b";
+    const red = candle.close > candle.open;
+    ctx.strokeStyle = red ? "#ff5864" : "#2ed69b";
+    ctx.fillStyle = red ? "#ff5864" : "#2ed69b";
     ctx.beginPath();
     ctx.moveTo(x, highY);
     ctx.lineTo(x, lowY);
@@ -277,10 +119,8 @@ function drawChart(
       Math.max(1.5, Math.abs(closeY - openY))
     );
     const volumeY =
-      volumeTop +
-      volumeHeight -
-      (candle.volume / maxVolume) * volumeHeight;
-    ctx.globalAlpha = 0.46;
+      volumeTop + volumeHeight - (candle.volume / maxVolume) * volumeHeight;
+    ctx.globalAlpha = 0.42;
     ctx.fillRect(
       x - candleWidth / 2,
       volumeY,
@@ -290,49 +130,140 @@ function drawChart(
     ctx.globalAlpha = 1;
   });
 
-  const keyY = toPriceY(keyLevel);
-  ctx.setLineDash([5, 5]);
-  ctx.strokeStyle = "#f6bd4b";
-  ctx.beginPath();
-  ctx.moveTo(pad.left, keyY);
-  ctx.lineTo(width - pad.right, keyY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = "#f6bd4b";
-  ctx.fillText(`關鍵 ${keyLevel}`, width - pad.right + 4, keyY - 5);
-
-  const trendline = showMonthlyStructure
-    ? null
-    : fitDescendingTrendline(candles, 2);
-  if (trendline) {
-    const startIndex = trendline.touchIndexes[0];
-    const lastTouchIndex = trendline.touchIndexes.at(-1)!;
-    const endIndex = Math.min(
-      candles.length - 1,
-      lastTouchIndex + Math.max(4, Math.round(candles.length * 0.14))
+  const drawLine = (
+    line: TrackingLineSegment,
+    endIndex: number,
+    color: string,
+    alpha: number,
+    dashed = false
+  ) => {
+    if (
+      line.slope >= 0 ||
+      endIndex < viewStart ||
+      line.h1Index > viewEnd
+    ) return;
+    const startIndex = Math.max(line.h1Index, viewStart);
+    const clippedEndIndex = Math.min(endIndex, viewEnd);
+    if (clippedEndIndex <= startIndex) return;
+    ctx.globalAlpha = alpha;
+    ctx.setLineDash(dashed ? [5, 4] : []);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = alpha > 0.7 ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(
+      toX(startIndex),
+      toPriceY(priceOnTrackingLine(line, startIndex))
     );
-    const linePriceAt = (index: number) =>
-      trendline.intercept + trendline.slope * index;
+    ctx.lineTo(
+      toX(clippedEndIndex),
+      toPriceY(priceOnTrackingLine(line, clippedEndIndex))
+    );
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  };
 
-    ctx.strokeStyle = "#77a7ff";
+  const latestSignal = [...trace.signals].reverse().find((signal) =>
+    trace.lineSegments.some(
+      (line) =>
+        line.roundId === signal.roundId &&
+        line.endIndex === signal.sourceEndIndex &&
+        line.slope < 0
+    )
+  );
+  const latestSignalH1 = latestSignal
+    ? trace.h1Points.find((h1) => h1.roundId === latestSignal.roundId)
+    : undefined;
+  const latestSignalLine = latestSignal
+    ? trace.lineSegments.find(
+        (line) =>
+          line.roundId === latestSignal.roundId &&
+          line.endIndex === latestSignal.sourceEndIndex
+      )
+    : undefined;
+  const displayedH1 = latestSignalH1 ?? trace.activeH1;
+  const displayedLine = latestSignalLine ?? (!latestSignal ? trace.currentLine : undefined);
+
+  if (displayedLine && displayedLine.slope < 0) {
+    drawLine(
+      displayedLine,
+      latestSignal?.index ?? displayedLine.endIndex,
+      "#77a7ff",
+      0.95
+    );
+  }
+
+  if (
+    displayedH1 &&
+    displayedH1.index >= viewStart &&
+    displayedH1.index <= viewEnd
+  ) {
+    const x = toX(displayedH1.index);
+    const y = toPriceY(displayedH1.price);
+    ctx.fillStyle = "#f6bd4b";
+    ctx.strokeStyle = "#090e13";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(toX(startIndex), toPriceY(linePriceAt(startIndex)));
-    ctx.lineTo(toX(endIndex), toPriceY(linePriceAt(endIndex)));
+    ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
+    ctx.fillStyle = "#f6bd4b";
+    ctx.fillText("H1", x + 6, Math.max(12, y - 7));
+  }
 
-    // Mark the exact swing highs used by the detector so the user can audit
-    // whether the automatically fitted resistance line is reasonable.
-    ctx.fillStyle = "#77a7ff";
-    trendline.touchIndexes.forEach((index) => {
-      ctx.beginPath();
-      ctx.arc(toX(index), toPriceY(candles[index].high), 3.2, 0, Math.PI * 2);
-      ctx.fill();
-    });
+  if (
+    displayedLine &&
+    displayedLine.endIndex >= viewStart &&
+    displayedLine.endIndex <= viewEnd
+  ) {
+    const x = toX(displayedLine.endIndex);
+    const y = toPriceY(displayedLine.endPrice);
+    ctx.fillStyle = "#63d8ee";
+    ctx.strokeStyle = "#090e13";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#63d8ee";
+    ctx.fillText("H2", x - 18, Math.max(12, y - 7));
+  }
+
+  if (
+    latestSignal &&
+    latestSignal.index >= viewStart &&
+    latestSignal.index <= viewEnd
+  ) {
+    const candle = candles[latestSignal.index];
+    const x = toX(latestSignal.index);
+    const y = toPriceY(candle.high) - 8;
+    ctx.fillStyle = "#ff5864";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 5, y - 8);
+    ctx.lineTo(x + 5, y - 8);
+    ctx.closePath();
+    ctx.fill();
     ctx.fillText(
-      `下降趨勢線 · ${trendline.touchIndexes.length} 點`,
-      toX(startIndex),
-      Math.max(12, toPriceY(linePriceAt(startIndex)) - 8)
+      latestSignal.breakoutType
+        ? BREAKOUT_TYPE_LABELS[latestSignal.breakoutType]
+        : "盤中紅 K 穿線",
+      x + 7,
+      y - 4
+    );
+  }
+
+  const latestEvaluation = trace.latestEvaluation;
+  if (latestEvaluation?.index === candles.length - 1) {
+    const y = toPriceY(latestEvaluation.linePrice);
+    ctx.fillStyle = "#63d8ee";
+    ctx.beginPath();
+    ctx.arc(toX(latestEvaluation.index), y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(
+      `既有線 ${latestEvaluation.linePrice.toFixed(2)}`,
+      Math.max(pad.left, width - pad.right - 116),
+      y - 6
     );
   }
 
@@ -340,7 +271,7 @@ function drawChart(
   const macdAbsoluteMax =
     Math.max(
       0.1,
-      ...candles.flatMap((candle) => [
+      ...visibleCandles.flatMap((candle) => [
         Math.abs(candle.macd),
         Math.abs(candle.signal),
         Math.abs(candle.histogram)
@@ -350,30 +281,29 @@ function drawChart(
   const toMacdY = (value: number) =>
     macdZero - (value / macdAbsoluteMax) * (macdHeight / 2);
 
-  ctx.strokeStyle = "#49a89d";
+  ctx.strokeStyle = "#384451";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad.left, macdZero);
   ctx.lineTo(width - pad.right, macdZero);
   ctx.stroke();
 
-  candles.forEach((candle, index) => {
-    const x = toX(index);
-    const previousHistogram =
-      index === 0 ? candle.histogram : candles[index - 1].histogram;
-    const rising = candle.histogram >= previousHistogram;
-    ctx.fillStyle =
-      candle.histogram > 0
-        ? rising
-          ? "#58cbd2"
-          : "#aa4c54"
-        : rising
-          ? "#b8782d"
-          : "#d63224";
+  visibleCandles.forEach((candle, offset) => {
+    const index = viewStart + offset;
+    const previous = index === 0 ? candle.histogram : candles[index - 1].histogram;
+    const weakening =
+      candle.histogram < 0 &&
+      previous < 0 &&
+      Math.abs(candle.histogram) < Math.abs(previous);
+    ctx.fillStyle = candle.histogram >= 0
+      ? "#58cbd2"
+      : weakening
+        ? "#f6bd4b"
+        : "#d63224";
     const histogramY = toMacdY(candle.histogram);
     ctx.globalAlpha = 0.82;
     ctx.fillRect(
-      x - candleWidth / 2,
+      toX(index) - candleWidth / 2,
       Math.min(histogramY, macdZero),
       candleWidth,
       Math.max(1, Math.abs(macdZero - histogramY))
@@ -381,62 +311,33 @@ function drawChart(
     ctx.globalAlpha = 1;
   });
 
-  // ChrisMoody CM_Ult_MacD_MTF: a thick MACD line that changes color
-  // relative to the signal, plus the yellow signal line.
   ctx.lineCap = "round";
-  for (let index = 1; index < candles.length; index += 1) {
-    const candle = candles[index];
-    ctx.strokeStyle =
-      candle.macd >= candle.signal ? "#45b832" : "#ca3021";
-    ctx.lineWidth = 4;
+  for (let index = Math.max(1, viewStart + 1); index < candles.length; index += 1) {
+    ctx.strokeStyle = candles[index].macd >= candles[index].signal
+      ? "#45b832"
+      : "#ca3021";
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(toX(index - 1), toMacdY(candles[index - 1].macd));
-    ctx.lineTo(toX(index), toMacdY(candle.macd));
+    ctx.lineTo(toX(index), toMacdY(candles[index].macd));
     ctx.stroke();
   }
-
   ctx.strokeStyle = "#c8c02c";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  candles.forEach((candle, index) => {
-    const x = toX(index);
-    const y = toMacdY(candle.signal);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  visibleCandles.forEach((candle, offset) => {
+    const index = viewStart + offset;
+    if (offset === 0) ctx.moveTo(toX(index), toMacdY(candle.signal));
+    else ctx.lineTo(toX(index), toMacdY(candle.signal));
   });
   ctx.stroke();
-
-  candles.forEach((candle, index) => {
-    if (index === 0) return;
-    const previous = candles[index - 1];
-    const crossedUp =
-      previous.macd < previous.signal && candle.macd >= candle.signal;
-    const crossedDown =
-      previous.macd > previous.signal && candle.macd <= candle.signal;
-    if (!crossedUp && !crossedDown) return;
-    ctx.fillStyle = crossedUp ? "#45b832" : "#ca3021";
-    ctx.beginPath();
-    ctx.arc(toX(index), toMacdY(candle.signal), 4.5, 0, Math.PI * 2);
-    ctx.fill();
-  });
   ctx.lineCap = "butt";
-
   ctx.fillStyle = "#8e9baa";
-  ctx.fillText("CM_Ult_MacD_MTF · 60 12 26 9", pad.left, macdTop - 5);
+  ctx.fillText("MACD · 負柱縮短為黃", pad.left, macdTop - 5);
+  ctx.fillStyle = latestCandle.histogram < 0 ? "#f6bd4b" : "#58cbd2";
+  ctx.fillText(latestCandle.histogram.toFixed(2), width - pad.right + 5, macdTop + 12);
 
-  const valueX = width - pad.right + 5;
-  ctx.font = "bold 10px Consolas, monospace";
-  ctx.fillStyle =
-    latestCandle.macd >= latestCandle.signal ? "#45b832" : "#ca3021";
-  ctx.fillText(latestCandle.macd.toFixed(2), valueX, macdTop + 12);
-  ctx.fillStyle = "#c8c02c";
-  ctx.fillText(latestCandle.signal.toFixed(2), valueX, macdTop + 25);
-  ctx.fillStyle =
-    latestCandle.histogram >= 0 ? "#58cbd2" : "#d63224";
-  ctx.fillText(latestCandle.histogram.toFixed(2), valueX, macdTop + 38);
-  ctx.font = "10px Consolas, monospace";
-
-  const finiteDpoValues = candles
+  const finiteDpoValues = visibleCandles
     .map((candle) => candle.dpo)
     .filter((value) => Number.isFinite(value));
   const dpoAbsoluteMax =
@@ -445,95 +346,160 @@ function drawChart(
   const toDpoY = (value: number) =>
     dpoZero - (value / dpoAbsoluteMax) * (dpoHeight / 2);
 
-  ctx.strokeStyle = "#787b86";
+  ctx.strokeStyle = "#384451";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad.left, dpoZero);
   ctx.lineTo(width - pad.right, dpoZero);
   ctx.stroke();
-
   ctx.strokeStyle = "#dedede";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  let dpoLineStarted = false;
-  candles.forEach((candle, index) => {
+  let dpoStarted = false;
+  visibleCandles.forEach((candle, offset) => {
+    const index = viewStart + offset;
     if (!Number.isFinite(candle.dpo)) {
-      dpoLineStarted = false;
+      dpoStarted = false;
       return;
     }
     const y = toDpoY(candle.dpo);
-    if (!dpoLineStarted) {
+    if (!dpoStarted) {
       ctx.moveTo(toX(index), y);
-      dpoLineStarted = true;
+      dpoStarted = true;
     } else {
       ctx.lineTo(toX(index), y);
     }
   });
   ctx.stroke();
-
   ctx.fillStyle = "#8e9baa";
-  ctx.fillText(`DPO ${DPO_PERIOD}`, pad.left, dpoTop - 5);
+  ctx.fillText(`DPO ${DPO_PERIOD} · 低點上彎確認`, pad.left, dpoTop - 5);
   if (Number.isFinite(latestCandle.dpo)) {
     ctx.fillStyle = "#dedede";
-    ctx.font = "bold 10px Consolas, monospace";
     ctx.fillText(
       latestCandle.dpo.toFixed(2),
       width - pad.right + 5,
-      Math.max(
-        dpoTop + 12,
-        Math.min(dpoTop + dpoHeight - 2, toDpoY(latestCandle.dpo) + 3)
-      )
+      Math.max(dpoTop + 12, Math.min(dpoTop + dpoHeight - 2, toDpoY(latestCandle.dpo) + 3))
     );
+  }
+
+  if (
+    inspectedIndex !== undefined &&
+    inspectedIndex >= viewStart &&
+    inspectedIndex <= viewEnd
+  ) {
+    const inspectedCandle = candles[inspectedIndex];
+    const x = toX(inspectedIndex);
+    const labelLines = [
+      inspectedCandle.time,
+      `最高 ${formatPrice(inspectedCandle.high)}　最低 ${formatPrice(inspectedCandle.low)}`,
+      `開盤 ${formatPrice(inspectedCandle.open)}　收盤 ${formatPrice(inspectedCandle.close)}`
+    ];
+    ctx.save();
+    ctx.setLineDash([3, 4]);
+    ctx.strokeStyle = "rgba(99, 216, 238, .72)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, pad.top);
+    ctx.lineTo(x, height - pad.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "bold 11px Consolas, monospace";
+    const labelWidth =
+      Math.max(...labelLines.map((line) => ctx.measureText(line).width)) + 16;
+    const labelHeight = 58;
+    const labelX = Math.max(
+      pad.left,
+      Math.min(width - pad.right - labelWidth, x - labelWidth / 2)
+    );
+    ctx.fillStyle = "rgba(13, 18, 24, .96)";
+    ctx.fillRect(labelX, pad.top + 4, labelWidth, labelHeight);
+    ctx.strokeStyle = "#63d8ee";
+    ctx.strokeRect(labelX, pad.top + 4, labelWidth, labelHeight);
+    ctx.fillStyle = "#d8f8ff";
+    ctx.fillText(labelLines[0], labelX + 8, pad.top + 20);
     ctx.font = "10px Consolas, monospace";
+    ctx.fillStyle = "#f2f6fa";
+    ctx.fillText(labelLines[1], labelX + 8, pad.top + 37);
+    ctx.fillText(labelLines[2], labelX + 8, pad.top + 52);
+    ctx.restore();
   }
 }
 
-export function CandleChart({
-  symbol,
-  keyLevel,
-  profitPlan,
-  monthlyStructure
-}: {
-  symbol: string;
-  keyLevel: number;
-  profitPlan?: ProfitPlan;
-  monthlyStructure?: MonthlyStructurePlan;
-}) {
+export function CandleChart({ symbol }: { symbol: string }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
-  const [adjustment, setAdjustment] =
-    useState<PriceAdjustment>("adjusted");
+  const [adjustment, setAdjustment] = useState<PriceAdjustment>("adjusted");
+  const [visibleBars, setVisibleBars] = useState(DEFAULT_VISIBLE_BARS);
+  const [inspectedIndex, setInspectedIndex] = useState<number>();
+  const inspectingRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const candles = useMemo(
     () => getMarketCandles(symbol, timeframe, adjustment) ?? [],
     [symbol, timeframe, adjustment]
   );
+  const trace = useMemo(
+    () => scanH1Trendline(
+      candles.map((candle) => ({
+        date: candle.time,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume
+      })),
+      {
+        macdHistogram: candles.map((candle) => candle.histogram),
+        dpo: candles.map((candle) => candle.dpo)
+      }
+    ),
+    [candles]
+  );
   const dataNote = getMarketDataNote(symbol);
-  const hasVerifiedData = Boolean(dataNote);
+  const visibleBarCount = Math.min(visibleBars, candles.length);
+  const minimumVisibleBars = Math.min(MIN_VISIBLE_BARS, candles.length);
+  const inspectedCandle =
+    inspectedIndex === undefined ? undefined : candles[inspectedIndex];
+  const zoomIn = () => {
+    setVisibleBars((current) =>
+      Math.max(minimumVisibleBars, Math.round(current * 0.72))
+    );
+  };
+  const zoomOut = () => {
+    setVisibleBars((current) =>
+      Math.min(candles.length, Math.max(current + 1, Math.round(current * 1.4)))
+    );
+  };
+  const inspectAtClientX = (clientX: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !candles.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const chartLeft = 12;
+    const chartRight = 58;
+    const chartWidth = Math.max(1, rect.width - chartLeft - chartRight);
+    const count = Math.min(visibleBars, candles.length);
+    const startIndex = candles.length - count;
+    const localX = Math.max(
+      0,
+      Math.min(chartWidth - 0.01, clientX - rect.left - chartLeft)
+    );
+    const offset = Math.floor(localX / (chartWidth / count));
+    setInspectedIndex(startIndex + offset);
+  };
+
+  useEffect(() => {
+    setVisibleBars(Math.min(DEFAULT_VISIBLE_BARS, candles.length));
+    setInspectedIndex(undefined);
+  }, [adjustment, candles.length, timeframe]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !candles.length) return;
     const redraw = () =>
-      drawChart(
-        canvas,
-        candles,
-        keyLevel,
-        profitPlan,
-        monthlyStructure,
-        timeframe === "month" && adjustment === "adjusted"
-      );
+      drawChart(canvas, candles, trace, visibleBars, inspectedIndex);
     redraw();
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [
-    adjustment,
-    candles,
-    keyLevel,
-    monthlyStructure,
-    profitPlan,
-    timeframe
-  ]);
+  }, [candles, inspectedIndex, trace, visibleBars]);
 
   return (
     <section className="panel chart-shell">
@@ -542,9 +508,7 @@ export function CandleChart({
           {timeframeLabels.map((item) => (
             <button
               aria-selected={timeframe === item.value}
-              className={`timeframe-button ${
-                timeframe === item.value ? "active" : ""
-              }`}
+              className={`timeframe-button ${timeframe === item.value ? "active" : ""}`}
               key={item.value}
               onClick={() => setTimeframe(item.value)}
               role="tab"
@@ -554,12 +518,8 @@ export function CandleChart({
             </button>
           ))}
         </div>
-        {hasVerifiedData ? (
-          <div
-            aria-label="價格還原方式"
-            className="adjustment-toggle"
-            role="group"
-          >
+        {dataNote ? (
+          <div aria-label="價格還原方式" className="adjustment-toggle" role="group">
             <button
               aria-pressed={adjustment === "adjusted"}
               className={adjustment === "adjusted" ? "active" : ""}
@@ -578,30 +538,99 @@ export function CandleChart({
             </button>
           </div>
         ) : null}
+        <div aria-label="圖表縮放" className="chart-zoom" role="group">
+          <button
+            aria-label="顯示更多 K 棒，縮小圖表"
+            disabled={visibleBarCount >= candles.length}
+            onClick={zoomOut}
+            title="縮小（顯示更多 K 棒）"
+            type="button"
+          >
+            −
+          </button>
+          <span>{visibleBarCount} 根</span>
+          <button
+            aria-label="顯示更少 K 棒，放大圖表"
+            disabled={visibleBarCount <= minimumVisibleBars}
+            onClick={zoomIn}
+            title="放大（顯示更少 K 棒）"
+            type="button"
+          >
+            ＋
+          </button>
+          <button
+            aria-label="顯示全部 K 棒"
+            disabled={visibleBarCount >= candles.length}
+            onClick={() => setVisibleBars(candles.length)}
+            type="button"
+          >
+            全部
+          </button>
+        </div>
         <div className="chart-legend">
-          <span><i className="legend-dot" style={{ background: "var(--up)" }} />漲</span>
-          <span><i className="legend-dot" style={{ background: "var(--down)" }} />跌</span>
-          <span><i className="legend-dot" style={{ background: "var(--amber)" }} />關鍵價</span>
-          <span><i className="legend-dot" style={{ background: "var(--blue)" }} />趨勢線</span>
-          <span><i className="legend-dot" style={{ background: "var(--violet)" }} />月線主壓</span>
-          <span><i className="legend-dot" style={{ background: "var(--down)" }} />獲利區</span>
+          <span><i className="legend-dot" style={{ background: "var(--amber)" }} />H1</span>
+          <span><i className="legend-dot" style={{ background: "var(--blue)" }} />逐 K 追蹤線</span>
+          <span><i className="legend-dot" style={{ background: "var(--up)" }} />紅 K 穿越</span>
+          <span><i className="legend-dot" style={{ background: "var(--cyan)" }} />當根既有線價</span>
         </div>
       </div>
       {dataNote ? (
         <div className="chart-source">
           {symbol}｜最新 OHLCV 已由
-          {dataNote.latestVerification?.source ?? "官方市場"}核對（
-          {dataNote.dataAsOf}）・
-          五年歷史 {dataNote.historyDays} 日・
+          {dataNote.latestVerification?.source ?? "官方市場"}核對（{dataNote.dataAsOf}） ·
+          五年歷史 {dataNote.historyDays} 日 ·
           {adjustment === "adjusted"
             ? "還原 K：使用歷史資料供應商的還原因子"
             : "原始 K：未還原除權息"}
         </div>
       ) : null}
+      <div className="chart-source">
+        {BREAKOUT_SIGNAL_NAME}｜顯示最近 {visibleBarCount} 根 · 可用按鈕或滑鼠滾輪縮放 · 按住或點選 K 棒查看日期與四價
+        {trace.activeH1 && trace.currentLine
+          ? `｜H1 ${trace.activeH1.date} → H2 ${trace.currentLine.endDate}`
+          : ""}
+        {inspectedCandle
+          ? `｜${inspectedCandle.time} · 最高 ${formatPrice(inspectedCandle.high)} · 最低 ${formatPrice(inspectedCandle.low)} · 開盤 ${formatPrice(inspectedCandle.open)} · 收盤 ${formatPrice(inspectedCandle.close)}`
+          : ""}
+      </div>
       <canvas
-        aria-label={`${symbol} ${timeframe} K 線與技術指標`}
+        aria-label={`${symbol} ${timeframe} K 線、最近 H1、H2 與突破紅 K、MACD 與 DPO${
+          inspectedCandle
+            ? `；已選取 ${inspectedCandle.time}，最高 ${formatPrice(inspectedCandle.high)}，最低 ${formatPrice(inspectedCandle.low)}，開盤 ${formatPrice(inspectedCandle.open)}，收盤 ${formatPrice(inspectedCandle.close)}`
+            : ""
+        }`}
         className="chart-canvas"
+        onDoubleClick={() => {
+          setVisibleBars(candles.length);
+          setInspectedIndex(undefined);
+        }}
+        onPointerCancel={() => {
+          inspectingRef.current = false;
+          setInspectedIndex(undefined);
+        }}
+        onPointerDown={(event) => {
+          inspectingRef.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          inspectAtClientX(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (inspectingRef.current) inspectAtClientX(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          inspectingRef.current = false;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onWheel={(event) => {
+          event.preventDefault();
+          setInspectedIndex(undefined);
+          if (event.deltaY < 0) zoomIn();
+          else zoomOut();
+        }}
         ref={canvasRef}
+        style={{ touchAction: "pan-y" }}
+        title="按住或點選查看日期、最高、最低、開盤、收盤價；滾輪縮放；雙擊顯示全部 K 棒"
       />
     </section>
   );

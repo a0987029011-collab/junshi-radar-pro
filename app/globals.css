@@ -368,6 +368,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .adjustment-toggle { display: flex; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #080d12; }
 .adjustment-toggle button { min-height: 29px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--quiet); cursor: pointer; font-size: 10px; font-weight: 800; }
 .adjustment-toggle button.active { background: #1b2632; color: var(--cyan); }
+.chart-zoom { display: flex; min-height: 35px; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #080d12; }
+.chart-zoom button { min-width: 31px; min-height: 29px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 800; }
+.chart-zoom button:hover:not(:disabled) { background: #1b2632; color: var(--cyan); }
+.chart-zoom button:disabled { cursor: default; opacity: .34; }
+.chart-zoom span { min-width: 48px; padding: 0 5px; color: var(--cyan); font-family: var(--mono); font-size: 10px; text-align: center; }
 .chart-legend { display: none; align-items: center; gap: 12px; color: var(--quiet); font-size: 10px; }
 .legend-dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 2px; }
 .chart-canvas { display: block; width: 100%; height: 520px; background: #090e13; }

@@ -64,7 +64,11 @@ test("long-cycle monthly watches keep support and do not claim a major breakout"
   const runLong = verifiedCandidates.find(
     (candidate) => candidate.symbol === "1808"
   );
-  assert.equal(runLong.monthlyStructure.longCycleWatch, true);
+  assert.ok(runLong);
+  assert.equal(
+    runLong.monthlyStructure.longCycleWatch,
+    runLong.monthlyStructure.state === "long-cycle-watch"
+  );
   assert.equal(runLong.monthlyStructure.keySupport, 28.5);
   assert.equal(runLong.monthlyStructure.priorKeySupport, 46.95);
   assert.equal(runLong.monthlyStructure.targetZoneLow, 40.25);

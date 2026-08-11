@@ -13,24 +13,24 @@ export async function generateMetadata(): Promise<Metadata> {
     (host.includes("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   const description =
-    "以日、週、月共振、MACD、DPO、趨勢線與結構支撐掃描台股的人工決策輔助工具。";
+    "以 H1 次根確認、無前視逐 K 追蹤線、MACD 負柱縮短與 DPO 上彎掃描台股紅 K 穿越訊號。";
 
   return {
     title: {
-      default: "軍師雷達｜台股多週期掃描",
+      default: "軍師雷達｜下降趨勢線紅 K 穿越",
       template: "%s｜軍師雷達",
     },
     description,
     applicationName: "軍師雷達",
     openGraph: {
       type: "website",
-      title: "軍師雷達｜台股多週期掃描",
+      title: "軍師雷達｜下降趨勢線紅 K 穿越",
       description,
       images: [`${origin}/og.png`],
     },
     twitter: {
       card: "summary_large_image",
-      title: "軍師雷達｜台股多週期掃描",
+      title: "軍師雷達｜下降趨勢線紅 K 穿越",
       description,
       images: [`${origin}/og.png`],
     },

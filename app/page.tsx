@@ -1,12 +1,10 @@
-import { RadarDashboard } from "../components/RadarDashboard";
+import ScannerDashboard from "../components/ScannerDashboard";
 import { RadarShell } from "../components/RadarShell";
-import { scanMarket } from "../lib/scoring-engine";
 
 export default function Home() {
-  const stocks = scanMarket();
   return (
     <RadarShell activePath="/">
-      <RadarDashboard stocks={stocks} />
+      <ScannerDashboard />
     </RadarShell>
   );
 }
