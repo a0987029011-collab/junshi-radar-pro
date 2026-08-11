@@ -1,6 +1,7 @@
 import radarSnapshotJson from "../data/radar-snapshot.json" with {
   type: "json"
 };
+import { calculateDpo, calculateMacd } from "./indicators.ts";
 import type { Candle, ScannedStock, Timeframe } from "./types";
 import type { CandlePoint, StockProfile } from "./stockData";
 
@@ -40,7 +41,10 @@ interface MarketDataNote {
   };
 }
 
-type TimeframeCharts = Record<Timeframe, Candle[]>;
+type SnapshotCandle = Omit<Candle, "macd" | "signal" | "histogram" | "dpo"> &
+  Partial<Pick<Candle, "macd" | "signal" | "histogram" | "dpo">>;
+
+type TimeframeCharts = Record<Timeframe, SnapshotCandle[]>;
 
 interface CandidateCharts {
   adjusted: TimeframeCharts;
@@ -55,6 +59,7 @@ interface RadarSnapshot {
 }
 
 const snapshot = radarSnapshotJson as unknown as RadarSnapshot;
+const calculatedChartCache = new Map<string, Candle[]>();
 
 export const marketSnapshotMeta = snapshot.meta;
 export const verifiedCandidates = snapshot.candidates;
@@ -98,7 +103,30 @@ export function getMarketCandles(
   timeframe: Timeframe,
   adjustment: PriceAdjustment = "adjusted"
 ) {
-  return snapshot.charts[symbol]?.[adjustment]?.[timeframe] ?? null;
+  const source = snapshot.charts[symbol]?.[adjustment]?.[timeframe];
+  if (!source) return null;
+
+  const cacheKey = `${symbol}:${timeframe}:${adjustment}`;
+  const cached = calculatedChartCache.get(cacheKey);
+  if (cached) return cached;
+
+  const closes = source.map((candle) => candle.close);
+  const macd = calculateMacd(closes);
+  const dpo = calculateDpo(closes);
+  const candles = source.map((candle, index) => ({
+    time: candle.time,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+    macd: macd.macd[index],
+    signal: macd.signal[index],
+    histogram: macd.histogram[index],
+    dpo: dpo[index]
+  }));
+  calculatedChartCache.set(cacheKey, candles);
+  return candles;
 }
 
 export function getMarketDataNote(symbol: string) {

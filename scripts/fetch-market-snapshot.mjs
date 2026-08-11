@@ -524,7 +524,21 @@ function snapshotFromAnalyses(meta, analyses) {
     charts: Object.fromEntries(
       candidates.map((candidate) => [
         candidate.symbol,
-        bySymbol.get(candidate.symbol).charts
+        Object.fromEntries(
+          Object.entries(bySymbol.get(candidate.symbol).charts).map(
+            ([adjustment, timeframes]) => [
+              adjustment,
+              Object.fromEntries(
+                Object.entries(timeframes).map(([timeframe, candles]) => [
+                  timeframe,
+                  candles.map(
+                    ({ macd, signal, histogram, dpo, ...ohlcv }) => ohlcv
+                  )
+                ])
+              )
+            ]
+          )
+        )
       ])
     ),
     notes: Object.fromEntries(

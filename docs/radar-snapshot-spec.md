@@ -14,12 +14,12 @@
 ## K 線欄位
 
 ```text
-time, open, high, low, close, volume, macd, signal, histogram, dpo
+time, open, high, low, close, volume
 ```
 
 - 掃描首頁以 adjusted 日 K 執行全市場掃描。
 - 個股圖可切換日、週、月與 adjusted／raw，切換後依該組 K 線重新跑 H1 狀態機。
-- MACD 與 DPO 缺少時由指標模組計算；快照已有值時，圖表使用相同值顯示與稽核。
+- MACD、signal、histogram 與 DPO 都是 OHLC 可重算的衍生值，不重複儲存在全市場快照；讀取圖表時由指標模組計算並快取，掃描與圖表使用同一組結果。
 
 ## 即時掃描輸出
 
