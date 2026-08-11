@@ -65,8 +65,8 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.2\.0/);
-  assert.match(html, /2026\/08\/11/);
+  assert.match(html, /版本 0\.3\.1/);
+  assert.match(html, /2026-08-11/);
   assert.doesNotMatch(html, /重新計算/);
   assert.doesNotMatch(html, /aria-label="掃描摘要"/);
   assert.match(html, /下降趨勢線紅 K 穿越/);
@@ -88,8 +88,8 @@ test("server-renders the position risk page", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /持股與風控/);
-  assert.match(html, /352/);
-  assert.match(html, /85.3/);
+  assert.doesNotMatch(html, /352 股/);
+  assert.doesNotMatch(html, /均價 85\.3/);
   assert.match(html, /分批進場/);
   assert.match(html, /追蹤與持股/);
   assert.match(html, /追蹤股票會先進入待登錄/);

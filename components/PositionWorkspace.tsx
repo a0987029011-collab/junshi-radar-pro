@@ -81,11 +81,6 @@ export function PositionWorkspace({
       <PositionManager
         classification={selected.classification}
         currentPrice={selected.currentPrice}
-        defaultLot={
-          selected.symbol === "2615"
-            ? { shares: 352, price: 85.3 }
-            : undefined
-        }
         key={selected.symbol}
         name={selected.name}
         stopPrice={selected.stopPrice}

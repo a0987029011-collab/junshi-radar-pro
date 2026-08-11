@@ -98,3 +98,19 @@ export async function addD1PositionSale(
   });
   return listD1PositionTransactions(ownerId, input.symbol);
 }
+
+export async function deleteD1PositionTransactions(
+  ownerId: string,
+  symbol: string
+) {
+  const rows = await getDb()
+    .delete(positionTransactions)
+    .where(
+      and(
+        eq(positionTransactions.ownerId, ownerId),
+        eq(positionTransactions.symbol, symbol)
+      )
+    )
+    .returning({ id: positionTransactions.id });
+  return rows.length;
+}

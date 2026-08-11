@@ -10,7 +10,6 @@ import {
 import type { Classification } from "../lib/types";
 import { ClassificationBadge } from "./StockUI";
 
-const DEFAULT_OCCURRED_AT = "2026-08-11T05:30:00.000Z";
 const BROKER_DISCOUNT_OPTIONS = [
   { value: 0.1, label: "一折" },
   { value: 0.2, label: "二折" },
@@ -40,8 +39,7 @@ export function PositionManager({
   currentPrice,
   stopPrice,
   stopSourceDate,
-  classification,
-  defaultLot
+  classification
 }: {
   symbol: string;
   name: string;
@@ -49,31 +47,14 @@ export function PositionManager({
   stopPrice: number | null;
   stopSourceDate: string;
   classification: Classification;
-  defaultLot?: { shares: number; price: number; occurredAt?: string };
 }) {
-  const [fallbackLot, setFallbackLot] = useState<PositionTransaction | null>(
-    defaultLot
-      ? {
-          id: `legacy-${symbol}`,
-          symbol,
-          name,
-          kind: "buy",
-          shares: defaultLot.shares,
-          price: defaultLot.price,
-          occurredAt: defaultLot.occurredAt ?? DEFAULT_OCCURRED_AT,
-          createdAt: defaultLot.occurredAt ?? DEFAULT_OCCURRED_AT
-        }
-      : null
-  );
   const [transactions, setTransactions] = useState<PositionTransaction[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [newShares, setNewShares] = useState("100");
   const [newPrice, setNewPrice] = useState(currentPrice.toFixed(2));
-  const [sellShares, setSellShares] = useState(
-    String(defaultLot?.shares ?? 100)
-  );
+  const [sellShares, setSellShares] = useState("100");
   const [sellPrice, setSellPrice] = useState(currentPrice.toFixed(2));
   const [commissionDiscount, setCommissionDiscount] = useState(
     DEFAULT_COMMISSION_DISCOUNT
@@ -91,36 +72,7 @@ export function PositionManager({
     // Device-local broker preference is applied to new transaction records.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCommissionDiscount(effectiveDiscount);
-    const legacyKey = `junshi-position-${symbol}`;
-    const saved = symbol === "2615" ? localStorage.getItem(legacyKey) : null;
-    if (saved) {
-      try {
-        const legacy = JSON.parse(saved) as {
-          shares?: number;
-          entryPrice?: number;
-        };
-        if (
-          Number.isFinite(legacy.shares) &&
-          Number(legacy.shares) > 0 &&
-          Number.isFinite(legacy.entryPrice) &&
-          Number(legacy.entryPrice) > 0
-        ) {
-          // Import the former device-only draft until the first server save.
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setFallbackLot((current) =>
-            current
-              ? {
-                  ...current,
-                  shares: Number(legacy.shares),
-                  price: Number(legacy.entryPrice)
-                }
-              : current
-          );
-        }
-      } catch {
-        localStorage.removeItem(legacyKey);
-      }
-    }
+    localStorage.removeItem(`junshi-position-${symbol}`);
 
     let cancelled = false;
     fetch(apiUrl, { cache: "no-store" })
@@ -156,20 +108,7 @@ export function PositionManager({
     };
   }, [apiUrl, symbol]);
 
-  const effectiveTransactions = useMemo(
-    () =>
-      transactions.length > 0
-        ? transactions
-        : fallbackLot
-          ? [fallbackLot]
-          : [],
-    [fallbackLot, transactions]
-  );
   const summary = useMemo(
-    () => summarizePositionTransactions(effectiveTransactions, commissionDiscount),
-    [commissionDiscount, effectiveTransactions]
-  );
-  const serverSummary = useMemo(
     () => summarizePositionTransactions(transactions, commissionDiscount),
     [commissionDiscount, transactions]
   );
@@ -199,30 +138,10 @@ export function PositionManager({
     return data.transactions ?? [];
   }
 
-  async function ensureExistingPositionSaved() {
-    if (
-      transactions.length > 0 ||
-      summary.totalShares <= 0 ||
-      !fallbackLot
-    ) return transactions;
-    const saved = await postPosition({
-      action: "buy",
-      symbol: fallbackLot.symbol,
-      name: fallbackLot.name,
-      shares: fallbackLot.shares,
-      price: fallbackLot.price,
-      commissionDiscount,
-      occurredAt: fallbackLot.occurredAt
-    });
-    localStorage.removeItem(`junshi-position-${symbol}`);
-    return saved;
-  }
-
   async function addLot() {
     setBusy(true);
     setFeedback("");
     try {
-      await ensureExistingPositionSaved();
       const next = await postPosition({
         action: "buy",
         symbol,
@@ -252,7 +171,6 @@ export function PositionManager({
     setBusy(true);
     setFeedback("");
     try {
-      await ensureExistingPositionSaved();
       const next = await postPosition({
         action: "sell",
         symbol,
@@ -280,8 +198,27 @@ export function PositionManager({
     }
   }
 
-  const hasOpenPosition =
-    transactions.length === 0 ? summary.totalShares > 0 : serverSummary.totalShares > 0;
+  async function clearRecords() {
+    if (!window.confirm(`確定清除 ${name} ${symbol} 的全部買進與賣出紀錄？`)) {
+      return;
+    }
+    setBusy(true);
+    setFeedback("");
+    try {
+      const response = await fetch(apiUrl, { method: "DELETE" });
+      const data = (await response.json()) as { deleted?: number; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "持股紀錄清除失敗");
+      setTransactions([]);
+      setSellShares("100");
+      setFeedback(`已清除 ${data.deleted ?? 0} 筆持股與交易紀錄。`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "持股紀錄清除失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasOpenPosition = summary.totalShares > 0;
 
   function updateCommissionDiscount(value: number) {
     setCommissionDiscount(value);
@@ -403,6 +340,16 @@ export function PositionManager({
       <div className="notice">
         買進與賣出成交會保存為歷史資料，供後續檢查分批進場、停損與實際報酬。
       </div>
+      {loaded && transactions.length > 0 ? (
+        <button
+          className="text-link position-clear-button"
+          disabled={busy}
+          onClick={clearRecords}
+          type="button"
+        >
+          清除這檔全部紀錄
+        </button>
+      ) : null}
     </section>
   );
 }

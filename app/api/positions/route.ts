@@ -19,6 +19,7 @@ type PositionStore = {
     ownerId: string,
     input: PositionSellInput
   ): Promise<PositionTransaction[]>;
+  remove(ownerId: string, symbol: string): Promise<number>;
 };
 
 function isLocalDevelopment(url: URL) {
@@ -40,7 +41,8 @@ async function getStore(request: Request): Promise<PositionStore> {
     return {
       list: local.listLocalPositionTransactions,
       addBuy: local.addLocalPositionBuy,
-      addSale: local.addLocalPositionSale
+      addSale: local.addLocalPositionSale,
+      remove: local.deleteLocalPositionTransactions
     };
   }
 
@@ -48,7 +50,8 @@ async function getStore(request: Request): Promise<PositionStore> {
   return {
     list: d1.listD1PositionTransactions,
     addBuy: d1.addD1PositionBuy,
-    addSale: d1.addD1PositionSale
+    addSale: d1.addD1PositionSale,
+    remove: d1.deleteD1PositionTransactions
   };
 }
 
@@ -90,6 +93,18 @@ export async function POST(request: Request) {
       throw new Error("不支援的持股操作");
     }
     return Response.json({ transactions });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const ownerId = getOwnerId(request);
+    if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
+    const symbol = readSymbol(new URL(request.url));
+    const deleted = await (await getStore(request)).remove(ownerId, symbol);
+    return Response.json({ deleted, transactions: [] });
   } catch (error) {
     return errorResponse(error);
   }

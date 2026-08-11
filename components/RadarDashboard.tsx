@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import strategy from "../config/strategy.json";
 import type { Classification, ScannedStock } from "../lib/types";
-import { estimatePosition } from "../lib/risk-calculator";
 import {
   ClassificationBadge,
   formatPrice,
@@ -59,18 +58,7 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
   const longCycleCount = stocks.filter(
     (stock) => stock.monthlyStructure?.longCycleWatch
   ).length;
-  const wanHai = stocks.find((stock) => stock.symbol === "2615")!;
   const dataAsOf = stocks[0]?.dataAsOf ?? "—";
-  const position = estimatePosition(
-    {
-      shares: 352,
-      entryPrice: 85.3,
-      currentPrice: wanHai.currentPrice,
-      stopPrice: 82,
-      targetPrice: wanHai.firstTarget
-    },
-    strategy.risk
-  );
 
   return (
     <>
@@ -282,41 +270,16 @@ export function RadarDashboard({ stocks }: { stocks: ScannedStock[] }) {
         <article className="panel position-card">
           <div className="section-head">
             <div>
-              <h3>實戰持股 · 萬海 2615</h3>
-              <p>352 股，均價 85.3，結構停損 82</p>
+              <h3>持股風控</h3>
+              <p>持股資料以你實際登錄的每一批成交為準</p>
             </div>
-            <ClassificationBadge classification={wanHai.classification} />
-          </div>
-          <div className={`position-price ${
-            position.unrealizedPnl >= 0 ? "positive" : "negative"
-          }`}>
-            {position.unrealizedPnl >= 0 ? "+" : ""}
-            {Math.round(position.unrealizedPnl).toLocaleString("zh-TW")} 元
-          </div>
-          <div className="position-line">
-            <span>投入成本（含手續費）</span>
-            <strong>{Math.round(position.entryCost).toLocaleString("zh-TW")}</strong>
-          </div>
-          <div className="position-line">
-            <span>停損預估損失（含稅費）</span>
-            <strong>{Math.round(position.estimatedLossAtStop).toLocaleString("zh-TW")}</strong>
-          </div>
-          <div className="position-line">
-            <span>風控上限使用率</span>
-            <strong>
-              {(
-                (position.estimatedLossAtStop /
-                  strategy.risk.maxLossPerTrade) *
-                100
-              ).toFixed(1)}%
-            </strong>
           </div>
           <Link
             className="primary-button"
             href="/positions"
             style={{ display: "grid", placeItems: "center", marginTop: 14 }}
           >
-            打開持股風控
+            查看與登錄持股
           </Link>
         </article>
 

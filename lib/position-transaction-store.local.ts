@@ -108,3 +108,17 @@ export async function addLocalPositionSale(
   await writeTransactions(transactions);
   return listLocalPositionTransactions(ownerId, input.symbol);
 }
+
+export async function deleteLocalPositionTransactions(
+  ownerId: string,
+  symbol: string
+) {
+  const transactions = await readTransactions();
+  const remaining = transactions.filter(
+    (transaction) =>
+      transaction.ownerId !== ownerId || transaction.symbol !== symbol
+  );
+  const deleted = transactions.length - remaining.length;
+  if (deleted > 0) await writeTransactions(remaining);
+  return deleted;
+}
