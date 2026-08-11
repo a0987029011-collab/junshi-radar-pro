@@ -14,14 +14,8 @@ import {
 import { importedStocks } from '../lib/stockData';
 
 const marketFilterOptions = ['全部', '上市', '上櫃'] as const;
-const sortOptions = [
-  { value: 'signal', label: '今日訊號優先' },
-  { value: 'date', label: '最近訊號日期' },
-  { value: 'h1', label: '最新 H1' }
-] as const;
 
 type MarketFilter = (typeof marketFilterOptions)[number];
-type SortOption = (typeof sortOptions)[number]['value'];
 type SignalPage = 'body-cross' | 'gap-above' | 'intraday-warning';
 
 function formatPrice(value?: number) {
@@ -119,7 +113,6 @@ function ResultCard({
 
 export default function ScannerDashboard() {
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('全部');
-  const [sortOption, setSortOption] = useState<SortOption>('signal');
   const [activeSignalPage, setActiveSignalPage] = useState<SignalPage>('body-cross');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
@@ -140,12 +133,6 @@ export default function ScannerDashboard() {
         : results.filter((item) => item.market === marketFilter);
 
     return filtered.slice().sort((left, right) => {
-      if (sortOption === 'date') {
-        return (right.signalDate ?? '').localeCompare(left.signalDate ?? '');
-      }
-      if (sortOption === 'h1') {
-        return (right.h1Index ?? -1) - (left.h1Index ?? -1);
-      }
       const confirmationOrder = isIntradaySnapshot
         ? 0
         : Number(right.closeConfirmation) - Number(left.closeConfirmation);
@@ -155,7 +142,7 @@ export default function ScannerDashboard() {
       if (warningOrder !== 0) return warningOrder;
       return (right.signalDate ?? '').localeCompare(left.signalDate ?? '');
     });
-  }, [isIntradaySnapshot, marketFilter, sortOption, sourceStocks]);
+  }, [isIntradaySnapshot, marketFilter, sourceStocks]);
 
   const isCurrentIntradaySignal = (item: ScanResultItem) =>
     item.signalOnLatestBar && (item.intradayWarning || item.closeConfirmation);
@@ -280,25 +267,13 @@ export default function ScannerDashboard() {
       </header>
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/20">
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mb-6">
           <div>
             <h2 className="text-2xl font-semibold text-white">訊號分頁</h2>
             <p className="mt-2 text-slate-400">
               點選條件後，只顯示該條件成立的個股，不混入其他訊號或一般追蹤股。
             </p>
           </div>
-          <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-            排序
-            <select
-              value={sortOption}
-              onChange={(event) => setSortOption(event.target.value as SortOption)}
-              className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200"
-            >
-              {sortOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
         </div>
 
         <div
