@@ -365,9 +365,12 @@ async function fetchOfficialMarket() {
       `Official quote coverage is incomplete: TWSE ${twse.quotes.length}, TPEx ${tpex.quotes.length}`
     );
   }
+  const quoteDates = { TWSE: twse.date, TPEx: tpex.date };
+  const date = [twse.date, tpex.date].sort().at(-1);
   if (twse.date !== tpex.date) {
-    throw new Error(
-      `Official market date mismatch: TWSE ${twse.date}, TPEx ${tpex.date}`
+    console.warn(
+      `Official market date mismatch: TWSE ${twse.date}, TPEx ${tpex.date}; ` +
+        `using ${date} history for the delayed exchange`
     );
   }
   const basics = [
@@ -380,7 +383,8 @@ async function fetchOfficialMarket() {
     }
   }
   return {
-    date: twse.date,
+    date,
+    quoteDates,
     basics,
     quotes: [...twse.quotes, ...tpex.quotes]
   };
@@ -498,6 +502,36 @@ export function mergeOfficialQuote(rows, quote) {
   return result;
 }
 
+export function resolveLatestQuote(rows, quote, dataAsOf, historyProvider) {
+  if (quote.date === dataAsOf) {
+    return {
+      quote,
+      source: `${quote.exchange} official close`
+    };
+  }
+  const latestRow = rows.find((row) => row[0] === dataAsOf);
+  if (!latestRow) {
+    throw new Error(
+      `${quote.exchange} official feed ends at ${quote.date} and ` +
+        `${historyProvider} has no ${dataAsOf} close`
+    );
+  }
+  return {
+    quote: {
+      ...quote,
+      date: dataAsOf,
+      open: latestRow[1],
+      high: latestRow[2],
+      low: latestRow[3],
+      close: latestRow[4],
+      volume: latestRow[5]
+    },
+    source:
+      `${historyProvider} close; ${quote.exchange} official feed delayed at ` +
+      quote.date
+  };
+}
+
 async function mapConcurrent(items, concurrency, mapper) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -578,6 +612,7 @@ async function scanLegacySnapshot(strategy) {
     provider: "既有已核對歷史快照",
     sources: legacy.meta.sources,
     limitations: legacy.meta.limitations,
+    quoteDates: official.quoteDates,
     universeStats: {
       discovered: symbols.length,
       capitalEligible: symbols.length,
@@ -625,8 +660,17 @@ async function scanFullMarket(strategy) {
     CONCURRENCY,
     async (company, index) => {
       try {
-        const quote = quoteByKey.get(`${company.exchange}:${company.symbol}`);
+        const officialQuote = quoteByKey.get(
+          `${company.exchange}:${company.symbol}`
+        );
         const history = await fetchHistory(company, official.date);
+        const resolved = resolveLatestQuote(
+          history.rows,
+          officialQuote,
+          official.date,
+          history.provider
+        );
+        const quote = resolved.quote;
         const daily = mergeOfficialQuote(history.rows, quote);
         if (daily.length < 260) {
           throw new Error(`only ${daily.length} historical rows`);
@@ -641,7 +685,7 @@ async function scanFullMarket(strategy) {
           historyProvider: history.provider,
           latestVerification: {
             date: official.date,
-            source: `${company.exchange} official close`,
+            source: resolved.source,
             open: quote.open,
             high: quote.high,
             low: quote.low,
@@ -661,12 +705,24 @@ async function scanFullMarket(strategy) {
     dataAsOf: official.date,
     generatedAt: new Date().toISOString(),
     market: "TWSE+TPEx",
-    mode: FUGLE_API_KEY
-      ? "licensed-adjusted-history-official-close"
-      : "delayed-history-official-close",
-    provider: FUGLE_API_KEY
-      ? "Fugle licensed adjusted history + official TWSE/TPEx close"
-      : "Delayed adjusted history + official TWSE/TPEx close",
+    mode: Object.values(official.quoteDates).every(
+      (date) => date === official.date
+    )
+      ? FUGLE_API_KEY
+        ? "licensed-adjusted-history-official-close"
+        : "delayed-history-official-close"
+      : FUGLE_API_KEY
+        ? "licensed-adjusted-history-mixed-close"
+        : "delayed-history-mixed-close",
+    provider: Object.values(official.quoteDates).every(
+      (date) => date === official.date
+    )
+      ? FUGLE_API_KEY
+        ? "Fugle licensed adjusted history + official TWSE/TPEx close"
+        : "Delayed adjusted history + official TWSE/TPEx close"
+      : FUGLE_API_KEY
+        ? "Fugle licensed history + latest close fallback for delayed official feed"
+        : "Delayed history + latest close fallback for delayed official feed",
     sources: {
       twseBasics: URLS.twseBasics,
       tpexBasics: URLS.tpexBasics,

@@ -8,7 +8,8 @@ import {
   parseTpexQuotes,
   parseTwseLegacyQuotes,
   parseTwseMiIndexQuotes,
-  parseTwseOpenApiQuotes
+  parseTwseOpenApiQuotes,
+  resolveLatestQuote
 } from "../scripts/fetch-market-snapshot.mjs";
 import {
   classifyCandidate,
@@ -169,6 +170,32 @@ test("official quote replaces the latest delayed historical row", () => {
     6941425,
     0.9
   ]);
+});
+
+test("delayed official exchange quote falls back to the matching history date", () => {
+  const rows = [
+    ["2026-08-07", 98, 101, 97, 100, 1000, 1],
+    ["2026-08-10", 101, 104, 100, 103, 2000, 1]
+  ];
+  const resolved = resolveLatestQuote(
+    rows,
+    {
+      exchange: "TPEx",
+      date: "2026-08-07",
+      open: 98,
+      high: 101,
+      low: 97,
+      close: 100,
+      volume: 1000
+    },
+    "2026-08-10",
+    "Yahoo Finance"
+  );
+
+  assert.equal(resolved.quote.date, "2026-08-10");
+  assert.equal(resolved.quote.close, 103);
+  assert.equal(resolved.quote.volume, 2000);
+  assert.match(resolved.source, /official feed delayed at 2026-08-07/);
 });
 
 test("deep scan converts a structural low and engulfing ceiling into a profit zone", () => {

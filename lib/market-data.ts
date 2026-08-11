@@ -15,6 +15,7 @@ interface SnapshotMeta {
   provider: string;
   sources: Record<string, string>;
   limitations: Record<string, string>;
+  quoteDates?: Partial<Record<"TWSE" | "TPEx", string>>;
   universeStats: {
     discovered: number;
     capitalEligible: number;
