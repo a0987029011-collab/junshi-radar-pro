@@ -41,8 +41,14 @@ interface MarketDataNote {
   };
 }
 
-type SnapshotCandle = Omit<Candle, "macd" | "signal" | "histogram" | "dpo"> &
-  Partial<Pick<Candle, "macd" | "signal" | "histogram" | "dpo">>;
+type SnapshotCandle = [
+  time: string,
+  open: number,
+  high: number,
+  low: number,
+  close: number,
+  volume: number
+];
 
 type TimeframeCharts = Record<Timeframe, SnapshotCandle[]>;
 
@@ -110,16 +116,16 @@ export function getMarketCandles(
   const cached = calculatedChartCache.get(cacheKey);
   if (cached) return cached;
 
-  const closes = source.map((candle) => candle.close);
+  const closes = source.map((candle) => candle[4]);
   const macd = calculateMacd(closes);
   const dpo = calculateDpo(closes);
   const candles = source.map((candle, index) => ({
-    time: candle.time,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
+    time: candle[0],
+    open: candle[1],
+    high: candle[2],
+    low: candle[3],
+    close: candle[4],
+    volume: candle[5],
     macd: macd.macd[index],
     signal: macd.signal[index],
     histogram: macd.histogram[index],

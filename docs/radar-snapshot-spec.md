@@ -7,15 +7,17 @@
 ## 頂層結構
 
 - `meta`：資料日期、產生時間、來源、模式與母體統計。
-- `candidates`：股票代號、名稱、交易所與產業等來源 metadata。歷史快照可能仍含舊欄位，但目前掃描與 UI 不得使用。
+- `candidates`：只保存股票代號、名稱、交易所與產業四項來源 metadata；舊策略分數、分類與大級別結構不得寫入正式快照。
 - `charts`：各股票的 adjusted／raw 日、週、月 K。
 - `notes`：逐檔資料日期、歷史範圍、公司行動與最新官方行情核對資訊。
 
 ## K 線欄位
 
 ```text
-time, open, high, low, close, volume
+[time, open, high, low, close, volume]
 ```
+
+正式快照以固定順序陣列保存每根 K 棒，避免每筆資料重複欄位名稱；讀取層會還原成具名欄位，掃描與畫面介面不變。
 
 - 掃描首頁以 adjusted 日 K 執行全市場掃描。
 - 個股圖可切換日、週、月與 adjusted／raw，切換後依該組 K 線重新跑 H1 狀態機。

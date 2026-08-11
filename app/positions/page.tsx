@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { PositionManager } from "../../components/PositionManager";
 import { RadarShell } from "../../components/RadarShell";
-import { getScannedStock } from "../../lib/scoring-engine";
+import { getMarketCandles } from "../../lib/market-data";
 
 export const metadata: Metadata = { title: "持股風控" };
 
 export default function PositionsPage() {
-  const wanHai = getScannedStock("2615")!;
+  const wanHaiCandles = getMarketCandles("2615", "day", "adjusted") ?? [];
+  const currentPrice = wanHaiCandles.at(-1)?.close ?? 85;
   return (
     <RadarShell activePath="/positions">
       <div className="page-heading">
@@ -15,9 +16,9 @@ export default function PositionsPage() {
         <p>先定義哪裡看錯，再決定能買多少。</p>
       </div>
       <PositionManager
-        classification={wanHai.classification}
-        currentPrice={wanHai.currentPrice}
-        targetPrice={wanHai.firstTarget}
+        classification="Watch"
+        currentPrice={currentPrice}
+        targetPrice={Number((currentPrice * 1.07).toFixed(2))}
       />
       <section className="section dashboard-grid">
         <article className="panel info-card">

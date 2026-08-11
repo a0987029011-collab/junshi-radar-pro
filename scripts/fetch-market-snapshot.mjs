@@ -514,7 +514,17 @@ async function mapConcurrent(items, concurrency, mapper) {
 }
 
 function snapshotFromAnalyses(meta, analyses) {
-  const candidates = sortCandidates(analyses.map((item) => item.candidate));
+  const rankedCandidates = sortCandidates(
+    analyses.map((item) => item.candidate)
+  );
+  const candidates = rankedCandidates.map(
+    ({ symbol, name, sector, exchange }) => ({
+      symbol,
+      name,
+      sector,
+      exchange
+    })
+  );
   const bySymbol = new Map(
     analyses.map((item) => [item.candidate.symbol, item])
   );
@@ -532,7 +542,14 @@ function snapshotFromAnalyses(meta, analyses) {
                 Object.entries(timeframes).map(([timeframe, candles]) => [
                   timeframe,
                   candles.map(
-                    ({ macd, signal, histogram, dpo, ...ohlcv }) => ohlcv
+                    ({ time, open, high, low, close, volume }) => [
+                      time,
+                      open,
+                      high,
+                      low,
+                      close,
+                      volume
+                    ]
                   )
                 ])
               )
