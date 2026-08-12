@@ -13,7 +13,7 @@ export async function generateMetadata(): Promise<Metadata> {
     (host.includes("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   const description =
-    "以 H1 次根確認、無前視逐 K 追蹤線、MACD 負柱縮短與 DPO 上彎掃描台股紅 K 穿越訊號。";
+    "以 H1 次根確認、無前視逐 K 追蹤線、MACD 負柱縮短或零軸上雙線向上，以及 DPO 上彎掃描台股紅 K 穿越訊號。";
 
   return {
     title: {

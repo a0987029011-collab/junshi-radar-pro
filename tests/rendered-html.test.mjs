@@ -65,7 +65,8 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.3\.2/);
+  assert.match(html, /版本 0\.4\.0/);
+  assert.match(html, /更新時間/);
   assert.match(html, /2026-08-11/);
   assert.doesNotMatch(html, /重新計算/);
   assert.doesNotMatch(html, /aria-label="掃描摘要"/);
@@ -77,6 +78,7 @@ test("server-renders the radar dashboard", async () => {
   assert.doesNotMatch(html, /最近訊號日期/);
   assert.doesNotMatch(html, /最新 H1/);
   assert.match(html, /紅 K 實體穿越/);
+  assert.match(html, /零軸上雙線向上/);
   assert.match(html, /跳空紅 K 站上/);
   assert.match(html, /當根既有線價/);
   assert.match(html, /DPO/);

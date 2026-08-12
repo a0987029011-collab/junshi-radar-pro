@@ -27,6 +27,15 @@ function conditionClass(active: boolean) {
   return active ? 'text-rose-300' : 'text-slate-400';
 }
 
+function formatSnapshotTime(value: string) {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(new Date(value));
+}
+
 function ResultCard({
   item,
   intraday
@@ -242,7 +251,9 @@ export default function ScannerDashboard() {
             }`}>
               <span className={`h-2 w-2 rounded-full ${isIntradaySnapshot ? 'bg-amber-300' : 'bg-emerald-300'}`} />
               <strong>{isIntradaySnapshot ? '盤中快照｜僅作預警' : '正式收盤資料'}</strong>
-              <span>資料日期 {marketSnapshotMeta.dataAsOf}</span>
+              <span>
+                資料日期 {marketSnapshotMeta.dataAsOf} · 更新時間 {formatSnapshotTime(marketSnapshotMeta.generatedAt)}
+              </span>
               {marketSnapshotMeta.quoteTime ? <span>擷取 {marketSnapshotMeta.quoteTime.slice(0, 8)}</span> : null}
             </div>
           </div>
