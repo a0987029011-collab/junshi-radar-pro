@@ -65,7 +65,7 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.4\.0/);
+  assert.match(html, /版本 0\.4\.1/);
   assert.match(html, /更新時間/);
   assert.match(html, /2026-08-11/);
   assert.doesNotMatch(html, /重新計算/);
@@ -109,7 +109,8 @@ test("server-renders the position risk page", async () => {
   assert.match(html, /日 K/);
   assert.match(html, /週 K/);
   assert.match(html, /月 K/);
-  assert.match(html, /按住或點選 K 棒，在這裡查看時間與四價/);
+  assert.match(html, /單指左右拖曳可移動圖表/);
+  assert.match(html, /可用兩指縮放、單指左右拖曳/);
   assert.match(html, /預估浮動損益率（含費稅）/);
   assert.doesNotMatch(html, /預設資金規則/);
   assert.doesNotMatch(html, /第一目標價/);

@@ -1,7 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { DPO_PERIOD } from "../lib/indicators.ts";
+import {
+  getAnchoredEndOffset,
+  getPannedEndOffset,
+  getPinchVisibleBars,
+  resolveChartViewport
+} from "../lib/chart-viewport";
 import {
   getMarketCandles,
   getMarketDataNote,
@@ -38,6 +50,10 @@ const DEFAULT_VISIBLE_BARS = 180;
 const MIN_VISIBLE_BARS = 30;
 const getProjectionBarCount = (visibleCount: number) =>
   Math.min(12, Math.max(6, Math.round(visibleCount * 0.08)));
+const getPointDistance = (
+  first: { x: number; y: number },
+  second: { x: number; y: number }
+) => Math.hypot(second.x - first.x, second.y - first.y);
 const priceFormatter = new Intl.NumberFormat("zh-TW", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
@@ -77,6 +93,7 @@ function drawChart(
   candles: Candle[],
   trace: H1TrendlineScan,
   requestedVisibleBars: number,
+  requestedViewEndOffset: number,
   inspectedIndex?: number,
   manualLine?: TrackingLineSegment,
   intradaySnapshot = false
@@ -100,13 +117,16 @@ function drawChart(
   const dpoTop = macdTop + macdHeight + 18;
   const dpoHeight = height - dpoTop - pad.bottom;
   const chartWidth = width - pad.left - pad.right;
-  const visibleCount = Math.min(
+  const viewport = resolveChartViewport(
     candles.length,
-    Math.max(MIN_VISIBLE_BARS, requestedVisibleBars)
+    requestedVisibleBars,
+    MIN_VISIBLE_BARS,
+    requestedViewEndOffset
   );
-  const viewStart = candles.length - visibleCount;
-  const viewEnd = candles.length - 1;
-  const visibleCandles = candles.slice(viewStart);
+  const visibleCount = viewport.visibleCount;
+  const viewEnd = viewport.endIndex;
+  const viewStart = viewport.startIndex;
+  const visibleCandles = candles.slice(viewStart, viewEnd + 1);
   const historicalBreakoutLowLine = getLatestBreakoutLowLine(candles, trace.signals);
   const supportTrendline = manualLine ?? getSystemDisplayTrendline(trace).line;
   const currentBreakoutLowLine = supportTrendline
@@ -372,7 +392,12 @@ function drawChart(
   }
 
   const latestEvaluation = trace.latestEvaluation;
-  if (!manualLine && latestEvaluation?.index === candles.length - 1) {
+  if (
+    !manualLine &&
+    latestEvaluation?.index === candles.length - 1 &&
+    latestEvaluation.index >= viewStart &&
+    latestEvaluation.index <= viewEnd
+  ) {
     const y = toPriceY(latestEvaluation.linePrice);
     ctx.fillStyle = "#63d8ee";
     ctx.beginPath();
@@ -385,7 +410,7 @@ function drawChart(
     );
   }
 
-  const latestCandle = candles.at(-1)!;
+  const latestCandle = candles[viewEnd];
   const macdAbsoluteMax =
     Math.max(
       0.1,
@@ -430,7 +455,7 @@ function drawChart(
   });
 
   ctx.lineCap = "round";
-  for (let index = Math.max(1, viewStart + 1); index < candles.length; index += 1) {
+  for (let index = Math.max(1, viewStart + 1); index <= viewEnd; index += 1) {
     ctx.strokeStyle = candles[index].macd >= candles[index].signal
       ? "#45b832"
       : "#ca3021";
@@ -525,6 +550,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
   const [adjustment, setAdjustment] = useState<PriceAdjustment>("adjusted");
   const [visibleBars, setVisibleBars] = useState(DEFAULT_VISIBLE_BARS);
+  const [viewEndOffset, setViewEndOffset] = useState(0);
   const [inspectedIndex, setInspectedIndex] = useState<number>();
   const [correction, setCorrection] = useState<TrendlineCorrection | null>(null);
   const [correctionLoading, setCorrectionLoading] = useState(true);
@@ -534,6 +560,19 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [saving, setSaving] = useState(false);
   const inspectingRef = useRef(false);
   const draggingAnchorRef = useRef<"h1" | "h2" | null>(null);
+  const touchPointsRef = useRef(new Map<number, { x: number; y: number }>());
+  const touchPanRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startEndOffset: number;
+    visibleCount: number;
+    moved: boolean;
+  } | null>(null);
+  const pinchRef = useRef<{
+    startDistance: number;
+    startVisibleCount: number;
+    anchorIndex: number;
+  } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const candles = useMemo(
     () => getMarketCandles(symbol, timeframe, adjustment) ?? [],
@@ -602,8 +641,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
       ? historicalBreakoutLowLine
       : undefined;
   const dataNote = getMarketDataNote(symbol);
-  const visibleBarCount = Math.min(visibleBars, candles.length);
   const minimumVisibleBars = Math.min(MIN_VISIBLE_BARS, candles.length);
+  const viewport = resolveChartViewport(
+    candles.length,
+    visibleBars,
+    minimumVisibleBars,
+    viewEndOffset
+  );
+  const visibleBarCount = viewport.visibleCount;
   const inspectedCandle =
     inspectedIndex === undefined ? undefined : candles[inspectedIndex];
   const currentBreakoutDate =
@@ -615,15 +660,57 @@ export function CandleChart({ symbol }: { symbol: string }) {
     timeframe,
     adjustment
   })}`;
-  const zoomIn = () => {
-    setVisibleBars((current) =>
-      Math.max(minimumVisibleBars, Math.round(current * 0.72))
+  const setChartZoom = (
+    requestedVisibleBars: number,
+    anchor?: { index: number; ratio: number }
+  ) => {
+    const nextVisibleCount = resolveChartViewport(
+      candles.length,
+      requestedVisibleBars,
+      minimumVisibleBars,
+      0
+    ).visibleCount;
+    setVisibleBars(nextVisibleCount);
+    setViewEndOffset((current) =>
+      anchor
+        ? getAnchoredEndOffset(
+            candles.length,
+            nextVisibleCount,
+            anchor.index,
+            anchor.ratio
+          )
+        : Math.min(current, Math.max(0, candles.length - nextVisibleCount))
     );
+    setInspectedIndex(undefined);
+  };
+  const zoomIn = () => {
+    setChartZoom(Math.max(minimumVisibleBars, Math.round(visibleBarCount * 0.72)));
   };
   const zoomOut = () => {
-    setVisibleBars((current) =>
-      Math.min(candles.length, Math.max(current + 1, Math.round(current * 1.4)))
+    setChartZoom(
+      Math.min(
+        candles.length,
+        Math.max(visibleBarCount + 1, Math.round(visibleBarCount * 1.4))
+      )
     );
+  };
+  const ratioAtClientX = (clientX: number, count: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas || count <= 1) return 0;
+    const rect = canvas.getBoundingClientRect();
+    const chartLeft = 12;
+    const chartRight = 58;
+    const chartWidth = Math.max(1, rect.width - chartLeft - chartRight);
+    const xStep = chartWidth / (count + getProjectionBarCount(count));
+    const localX = Math.max(
+      0,
+      Math.min(chartWidth - 0.01, clientX - rect.left - chartLeft)
+    );
+    const barPosition = Math.max(
+      0,
+      Math.min(count - 1, localX / xStep - 0.5)
+    );
+    return barPosition / (count - 1);
   };
   const indexAtClientX = (clientX: number) => {
     const canvas = canvasRef.current;
@@ -632,8 +719,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const chartLeft = 12;
     const chartRight = 58;
     const chartWidth = Math.max(1, rect.width - chartLeft - chartRight);
-    const count = Math.min(visibleBars, candles.length);
-    const startIndex = candles.length - count;
+    const count = viewport.visibleCount;
+    const startIndex = viewport.startIndex;
     const xStep = chartWidth / (count + getProjectionBarCount(count));
     const localX = Math.max(
       0,
@@ -648,6 +735,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   };
   const resetChartView = () => {
     setVisibleBars(DEFAULT_VISIBLE_BARS);
+    setViewEndOffset(0);
     setInspectedIndex(undefined);
   };
 
@@ -676,6 +764,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
     setVisibleBars((current) =>
       Math.min(candles.length, Math.max(current, candles.length - nextDraft.h1Index))
     );
+    setViewEndOffset(0);
     setInspectedIndex(undefined);
     setFeedback("");
     setEditing(true);
@@ -685,8 +774,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const canvas = canvasRef.current;
     if (!canvas || !draft) return false;
     const rect = canvas.getBoundingClientRect();
-    const count = Math.min(visibleBars, candles.length);
-    const startIndex = candles.length - count;
+    const count = viewport.visibleCount;
+    const startIndex = viewport.startIndex;
     const xStep = Math.max(
       1,
       (rect.width - 12 - 58) / (count + getProjectionBarCount(count))
@@ -799,6 +888,143 @@ export function CandleChart({ symbol }: { symbol: string }) {
     }
   };
 
+  const handleChartPointerDown = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    if (editing) {
+      if (beginAnchorDrag(event.clientX)) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        dragAnchorTo(event.clientX);
+      }
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType !== "touch") {
+      inspectingRef.current = true;
+      inspectAtClientX(event.clientX);
+      return;
+    }
+
+    event.preventDefault();
+    const points = touchPointsRef.current;
+    points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    setInspectedIndex(undefined);
+
+    if (points.size === 1) {
+      touchPanRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startEndOffset: viewport.endOffset,
+        visibleCount: viewport.visibleCount,
+        moved: false
+      };
+      pinchRef.current = null;
+      return;
+    }
+
+    const [first, second] = Array.from(points.values());
+    const midpointX = (first.x + second.x) / 2;
+    pinchRef.current = {
+      startDistance: Math.max(1, getPointDistance(first, second)),
+      startVisibleCount: viewport.visibleCount,
+      anchorIndex: indexAtClientX(midpointX) ?? viewport.endIndex
+    };
+    touchPanRef.current = null;
+  };
+
+  const handleChartPointerMove = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    if (editing) {
+      dragAnchorTo(event.clientX);
+      return;
+    }
+    if (event.pointerType !== "touch") {
+      if (inspectingRef.current) inspectAtClientX(event.clientX);
+      return;
+    }
+
+    const points = touchPointsRef.current;
+    if (!points.has(event.pointerId)) return;
+    event.preventDefault();
+    points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    const pinch = pinchRef.current;
+    if (points.size >= 2 && pinch) {
+      const [first, second] = Array.from(points.values());
+      const currentDistance = Math.max(1, getPointDistance(first, second));
+      const nextVisibleCount = getPinchVisibleBars(
+        pinch.startVisibleCount,
+        pinch.startDistance,
+        currentDistance,
+        minimumVisibleBars,
+        candles.length
+      );
+      const midpointX = (first.x + second.x) / 2;
+      setChartZoom(nextVisibleCount, {
+        index: pinch.anchorIndex,
+        ratio: ratioAtClientX(midpointX, nextVisibleCount)
+      });
+      return;
+    }
+
+    const pan = touchPanRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const chartWidth = Math.max(1, rect.width - 12 - 58);
+    const pixelsPerBar =
+      chartWidth / (pan.visibleCount + getProjectionBarCount(pan.visibleCount));
+    const horizontalDelta = event.clientX - pan.startX;
+    pan.moved ||= Math.abs(horizontalDelta) >= 6;
+    setViewEndOffset(
+      getPannedEndOffset(
+        pan.startEndOffset,
+        horizontalDelta,
+        pixelsPerBar,
+        Math.max(0, candles.length - pan.visibleCount)
+      )
+    );
+  };
+
+  const handleChartPointerUp = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    draggingAnchorRef.current = null;
+    inspectingRef.current = false;
+
+    if (event.pointerType === "touch") {
+      const points = touchPointsRef.current;
+      const pan = touchPanRef.current;
+      const wasTap =
+        points.size === 1 &&
+        pan?.pointerId === event.pointerId &&
+        !pan.moved &&
+        pinchRef.current === null;
+      points.delete(event.pointerId);
+      if (points.size === 0) {
+        touchPanRef.current = null;
+        pinchRef.current = null;
+        if (wasTap) inspectAtClientX(event.clientX);
+      }
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleChartPointerCancel = () => {
+    draggingAnchorRef.current = null;
+    inspectingRef.current = false;
+    touchPointsRef.current.clear();
+    touchPanRef.current = null;
+    pinchRef.current = null;
+    setInspectedIndex(undefined);
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     fetch(correctionUrl, { cache: "no-store", signal: controller.signal })
@@ -829,6 +1055,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
         candles,
         trace,
         visibleBars,
+        viewEndOffset,
         inspectedIndex,
         manualLine,
         intradaySnapshot
@@ -837,7 +1064,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [candles, inspectedIndex, intradaySnapshot, manualLine, trace, visibleBars]);
+  }, [
+    candles,
+    inspectedIndex,
+    intradaySnapshot,
+    manualLine,
+    trace,
+    viewEndOffset,
+    visibleBars
+  ]);
 
   return (
     <section className="panel chart-shell">
@@ -929,7 +1164,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
           <button
             aria-label="顯示全部 K 棒"
             disabled={visibleBarCount >= candles.length}
-            onClick={() => setVisibleBars(candles.length)}
+            onClick={() => setChartZoom(candles.length)}
             type="button"
           >
             全部
@@ -972,7 +1207,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
         </div>
       ) : null}
       <div className="chart-source">
-        {BREAKOUT_SIGNAL_NAME}｜顯示最近 {visibleBarCount} 根 · 可用按鈕或滑鼠滾輪縮放 · {editing ? "拖曳紫色 H1、H2 圓點校正" : "按住或點選 K 棒查看日期與四價"}
+        {BREAKOUT_SIGNAL_NAME}｜顯示 {visibleBarCount} 根 · 可用兩指縮放、單指左右拖曳，或按鈕與滑鼠滾輪操作 · {editing ? "拖曳紫色 H1、H2 圓點校正" : "輕點 K 棒查看日期與四價"}
         {systemTrendline.h1 && systemTrendline.line
           ? `｜系統 H1 ${systemTrendline.h1.date} → H2 ${systemTrendline.line.endDate}`
           : ""}
@@ -996,7 +1231,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             <span className="chart-inspection-item"><small>{intradaySnapshot ? "現" : "收"}</small><strong>{formatPrice(inspectedCandle.close)}</strong></span>
           </>
         ) : (
-          <span className="chart-inspection-hint">按住或點選 K 棒，在這裡查看時間與四價</span>
+          <span className="chart-inspection-hint">輕點 K 棒查看時間與四價；單指左右拖曳可移動圖表</span>
         )}
       </div>
       <canvas
@@ -1016,51 +1251,22 @@ export function CandleChart({ symbol }: { symbol: string }) {
         className="chart-canvas"
         onDoubleClick={() => {
           if (editing) return;
-          setVisibleBars(candles.length);
-          setInspectedIndex(undefined);
+          setChartZoom(candles.length);
         }}
-        onPointerCancel={() => {
-          draggingAnchorRef.current = null;
-          inspectingRef.current = false;
-          setInspectedIndex(undefined);
-        }}
-        onPointerDown={(event) => {
-          if (editing) {
-            if (beginAnchorDrag(event.clientX)) {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              dragAnchorTo(event.clientX);
-            }
-            return;
-          }
-          inspectingRef.current = true;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          inspectAtClientX(event.clientX);
-        }}
-        onPointerMove={(event) => {
-          if (editing) {
-            dragAnchorTo(event.clientX);
-            return;
-          }
-          if (inspectingRef.current) inspectAtClientX(event.clientX);
-        }}
-        onPointerUp={(event) => {
-          draggingAnchorRef.current = null;
-          inspectingRef.current = false;
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }
-        }}
+        onPointerCancel={handleChartPointerCancel}
+        onPointerDown={handleChartPointerDown}
+        onPointerMove={handleChartPointerMove}
+        onPointerUp={handleChartPointerUp}
         onWheel={(event) => {
           event.preventDefault();
-          setInspectedIndex(undefined);
           if (event.deltaY < 0) zoomIn();
           else zoomOut();
         }}
         ref={canvasRef}
-        style={{ touchAction: "pan-y" }}
+        style={{ touchAction: "none" }}
         title={editing
           ? "按住紫色的校正 H1 或 H2 圓點，拖到你認定的 K 棒"
-          : `按住或點選查看日期、最高、最低、開盤、${intradaySnapshot ? "現價" : "收盤價"}；滾輪縮放；雙擊顯示全部 K 棒`}
+          : `輕點查看日期、最高、最低、開盤、${intradaySnapshot ? "現價" : "收盤價"}；單指左右移動；兩指或滾輪縮放；雙擊顯示全部 K 棒`}
       />
       {editing && draft && manualLine ? (
         <div className="trendline-editor">
