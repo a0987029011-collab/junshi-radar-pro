@@ -27,10 +27,7 @@ type CorrectionStore = {
 };
 
 function isLocalDevelopment(url: URL) {
-  return (
-    process.env.NODE_ENV === "development" &&
-    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-  );
+  return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
 }
 
 function getOwnerId(request: Request) {

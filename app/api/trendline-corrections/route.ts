@@ -32,18 +32,14 @@ function isLocalHost(url: URL) {
   );
 }
 
-function isLocalDevelopment(url: URL) {
-  return process.env.NODE_ENV === "development" && isLocalHost(url);
-}
-
 function getOwnerId(request: Request) {
   const userId = request.headers.get(USER_ID_HEADER)?.trim();
   if (userId) return userId;
-  return isLocalDevelopment(new URL(request.url)) ? LOCAL_OWNER_ID : null;
+  return isLocalHost(new URL(request.url)) ? LOCAL_OWNER_ID : null;
 }
 
 async function getStore(request: Request): Promise<CorrectionStore> {
-  if (isLocalDevelopment(new URL(request.url))) {
+  if (isLocalHost(new URL(request.url))) {
     const local = await import("../../../lib/trendline-correction-store.local");
     return {
       get: local.getLocalTrendlineCorrection,
