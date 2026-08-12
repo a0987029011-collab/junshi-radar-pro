@@ -506,6 +506,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .position-entry-row label span, .position-sell-row label span { color: var(--muted); font-size: 9px; }
 .position-entry-row input, .position-sell-row input { width: 100%; min-width: 0; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: #080d12; color: var(--ink); font-family: var(--mono); }
 .position-entry-row button { grid-column: 1 / -1; min-height: 40px; }
+.position-heading-actions { display: flex; align-items: center; gap: 8px; }
+.position-delete-button { min-height: 30px; padding: 0 10px; border: 1px solid rgba(255, 88, 100, .55); border-radius: 8px; background: rgba(255, 88, 100, .08); color: var(--down); cursor: pointer; font-size: 9px; font-weight: 850; }
+.position-delete-button:disabled { cursor: default; opacity: .38; }
 .position-lot-list { display: grid; border-top: 1px solid var(--line-soft); }
 .position-lot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 1px; border-bottom: 1px solid var(--line-soft); }
 .position-lot-row:last-child { border-bottom: 0; }
@@ -566,7 +569,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .position-summary-card { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .position-summary-card > div, .position-summary-card > div:nth-child(2n) { border-right: 1px solid var(--line-soft); border-bottom: 0; }
   .position-summary-card > div:last-child { grid-column: auto; border-right: 0; }
-  .position-entry-row { grid-template-columns: minmax(0, .7fr) minmax(0, 1fr) auto; align-items: end; }
+  .position-entry-row { grid-template-columns: minmax(0, .7fr) minmax(0, 1fr) minmax(150px, .8fr) auto; align-items: end; }
   .position-entry-row button { grid-column: auto; min-width: 118px; }
   .position-sell-row { grid-template-columns: minmax(0, .7fr) minmax(0, 1fr) minmax(210px, auto); }
   .position-sell-actions { grid-column: auto; }

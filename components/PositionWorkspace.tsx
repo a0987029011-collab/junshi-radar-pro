@@ -54,6 +54,17 @@ export function PositionWorkspace({
   const selected =
     items.find((item) => item.symbol === selectedSymbol) ?? initialItem;
 
+  function removeItem(symbol: string) {
+    const remaining = items.filter((item) => item.symbol !== symbol);
+    setItems(remaining);
+    if (remaining.length === 0) {
+      window.location.assign("/");
+      return;
+    }
+    setSelectedSymbol(remaining[0].symbol);
+    setFeedback("已刪除誤選的持股與全部交易紀錄。");
+  }
+
   return (
     <>
       <section className="panel position-watch-panel">
@@ -83,6 +94,7 @@ export function PositionWorkspace({
         currentPrice={selected.currentPrice}
         key={selected.symbol}
         name={selected.name}
+        onDelete={removeItem}
         stopPrice={selected.stopPrice}
         stopSourceDate={selected.stopSourceDate}
         symbol={selected.symbol}

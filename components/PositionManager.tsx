@@ -33,13 +33,23 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function todayInTaipei() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
 export function PositionManager({
   symbol,
   name,
   currentPrice,
   stopPrice,
   stopSourceDate,
-  classification
+  classification,
+  onDelete
 }: {
   symbol: string;
   name: string;
@@ -47,6 +57,7 @@ export function PositionManager({
   stopPrice: number | null;
   stopSourceDate: string;
   classification: Classification;
+  onDelete: (symbol: string) => void;
 }) {
   const [transactions, setTransactions] = useState<PositionTransaction[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -54,6 +65,7 @@ export function PositionManager({
   const [feedback, setFeedback] = useState("");
   const [newShares, setNewShares] = useState("100");
   const [newPrice, setNewPrice] = useState(currentPrice.toFixed(2));
+  const [purchaseDate, setPurchaseDate] = useState(todayInTaipei);
   const [sellShares, setSellShares] = useState("100");
   const [sellPrice, setSellPrice] = useState(currentPrice.toFixed(2));
   const [commissionDiscount, setCommissionDiscount] = useState(
@@ -149,7 +161,7 @@ export function PositionManager({
         shares: Number(newShares),
         price: Number(newPrice),
         commissionDiscount,
-        occurredAt: new Date().toISOString()
+        occurredAt: `${purchaseDate}T12:00:00+08:00`
       });
       setTransactions(next);
       setSellShares(
@@ -159,7 +171,7 @@ export function PositionManager({
       );
       setNewShares("100");
       setNewPrice(currentPrice.toFixed(2));
-      setFeedback("已新增一批進場，平均進場價已重新計算。 ");
+      setFeedback(`已新增 ${purchaseDate} 的進場紀錄，並以該日 K 棒保存買入時點。`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "新增進場失敗");
     } finally {
@@ -218,6 +230,30 @@ export function PositionManager({
     }
   }
 
+  async function deleteHolding() {
+    if (!window.confirm(`確定刪除 ${name} ${symbol}？持股、交易紀錄與追蹤項目都會一併刪除。`)) {
+      return;
+    }
+    setBusy(true);
+    setFeedback("");
+    try {
+      const positionResponse = await fetch(apiUrl, { method: "DELETE" });
+      const positionData = (await positionResponse.json()) as { error?: string };
+      if (!positionResponse.ok) throw new Error(positionData.error ?? "持股刪除失敗");
+
+      const watchlistResponse = await fetch(
+        `/api/watchlist?symbol=${encodeURIComponent(symbol)}`,
+        { method: "DELETE" }
+      );
+      const watchlistData = (await watchlistResponse.json()) as { error?: string };
+      if (!watchlistResponse.ok) throw new Error(watchlistData.error ?? "追蹤項目刪除失敗");
+      onDelete(symbol);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "持股刪除失敗");
+      setBusy(false);
+    }
+  }
+
   const hasOpenPosition = summary.totalShares > 0;
 
   function updateCommissionDiscount(value: number) {
@@ -235,7 +271,12 @@ export function PositionManager({
           <h2>{name} {symbol}</h2>
           <p>分批進場自動計算均價，停損跟隨最近有效防守線</p>
         </div>
-        <ClassificationBadge classification={classification} />
+        <div className="position-heading-actions">
+          <ClassificationBadge classification={classification} />
+          <button className="position-delete-button" disabled={busy} onClick={deleteHolding} type="button">
+            刪除持股
+          </button>
+        </div>
       </div>
 
       <div className="position-summary-card" aria-label="持股摘要">
@@ -279,7 +320,7 @@ export function PositionManager({
 
       <section className="position-action-card">
         <div className="position-action-head">
-          <div><strong>分批進場</strong><span>每一批股數與成交價都會保留</span></div>
+          <div><strong>分批進場</strong><span>買入日期會對齊當日 K 棒，避免用錯日期核對訊號</span></div>
           <em>自動均價</em>
         </div>
         <div className="position-entry-row">
@@ -290,6 +331,10 @@ export function PositionManager({
           <label>
             <span>買進價</span>
             <input aria-label="買進價" min="0.01" onChange={(event) => setNewPrice(event.target.value)} step="0.05" type="number" value={newPrice} />
+          </label>
+          <label>
+            <span>買入日期</span>
+            <input aria-label="買入日期" max={todayInTaipei()} onChange={(event) => setPurchaseDate(event.target.value)} required type="date" value={purchaseDate} />
           </label>
           <button className="primary-button" disabled={busy} onClick={addLot} type="button">＋ 新增一批</button>
         </div>
