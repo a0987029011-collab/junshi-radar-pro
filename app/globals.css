@@ -454,6 +454,45 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .trendline-correction-summary span { color: var(--muted); font-family: var(--mono); font-size: 9px; }
 .trendline-correction-summary em { padding: 4px 7px; border-radius: 999px; background: rgba(216, 148, 255, .14); color: #dcb7f1; font-size: 9px; font-style: normal; font-weight: 800; }
 .trendline-correction-summary button { min-height: 30px; padding: 0 9px; border: 1px solid #6f527f; border-radius: 7px; background: transparent; color: #dcb7f1; cursor: pointer; font-size: 9px; font-weight: 800; }
+.trendline-wave-list { display: grid; gap: 10px; padding: 12px; border-top: 1px solid #3b2d48; background: rgba(216, 148, 255, .06); }
+.trendline-wave-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.trendline-wave-list-head > div { display: grid; gap: 3px; }
+.trendline-wave-list-head strong { color: #efd2ff; font-size: 11px; }
+.trendline-wave-list-head span { color: var(--muted); font-size: 9px; }
+.trendline-wave-list-head em { padding: 4px 8px; border-radius: 999px; background: rgba(216, 148, 255, .14); color: #dcb7f1; font-size: 9px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.trendline-wave-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.trendline-wave-card { position: relative; display: grid; gap: 8px; padding: 10px; border: 1px solid #40364a; border-radius: 9px; background: rgba(10, 15, 21, .82); }
+.trendline-wave-card.active { border-color: rgba(255, 209, 102, .55); }
+.trendline-wave-card.failed, .trendline-wave-card.parent-invalid { opacity: .65; }
+.trendline-wave-card > div { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
+.trendline-wave-card strong, .trendline-wave-card b { color: #f4eaff; font-size: 10px; }
+.trendline-wave-card span, .trendline-wave-card small { color: var(--muted); font-family: var(--mono); font-size: 8px; }
+.trendline-wave-card em { position: absolute; top: 7px; right: 7px; color: #d894ff; font-size: 7px; font-style: normal; font-weight: 800; }
+.trendline-wave-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.trendline-wave-actions button { min-height: 30px; padding: 0 10px; border: 1px solid #6f527f; border-radius: 7px; background: transparent; color: #dcb7f1; cursor: pointer; font-size: 9px; font-weight: 800; }
+.trendline-wave-actions button:last-child { border-color: rgba(255, 88, 100, .45); color: #ff9aa1; }
+.strategy-wave-hero { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(250px, .75fr); gap: 24px; align-items: center; }
+.strategy-wave-hero h2 { max-width: 720px; margin-top: 14px; font-size: clamp(20px, 3vw, 34px); line-height: 1.2; }
+.strategy-wave-hero p { max-width: 760px; margin-top: 10px; color: var(--muted); line-height: 1.75; }
+.strategy-wave-switches { display: grid; gap: 8px; }
+.strategy-wave-switches > div { display: flex; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8, 13, 18, .7); }
+.strategy-wave-switches span { color: var(--muted); font-size: 10px; }
+.strategy-wave-switches strong { color: var(--amber); font-size: 10px; }
+.strategy-wave-flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+.strategy-wave-flow article { position: relative; overflow: hidden; min-height: 180px; }
+.strategy-wave-flow h3 { margin-top: 14px; }
+.strategy-wave-flow p { margin-top: 9px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.strategy-wave-flow article > strong { display: block; margin-top: 12px; color: var(--amber); font-size: 10px; }
+.strategy-wave-number { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid rgba(246, 189, 75, .5); border-radius: 50%; background: rgba(246, 189, 75, .1); color: var(--amber); font-family: var(--mono); font-weight: 900; }
+.strategy-wave-detail-grid { margin-top: 16px; }
+.strategy-case-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.strategy-case-grid > div { display: grid; gap: 6px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(9, 14, 19, .72); }
+.strategy-case-grid span, .strategy-case-grid small { color: var(--muted); font-size: 9px; }
+.strategy-case-grid strong { color: #e8edf2; font-size: 11px; }
+@media (max-width: 760px) {
+  .strategy-wave-hero, .strategy-wave-flow, .strategy-case-grid { grid-template-columns: 1fr; }
+  .strategy-wave-flow article { min-height: auto; }
+}
 .trendline-feedback { padding: 8px 12px; border-top: 1px solid var(--line-soft); background: #10161e; color: var(--amber); font-size: 10px; line-height: 1.5; }
 .stock-analysis-grid { display: grid; gap: 12px; margin-top: 12px; }
 .info-card { padding: 17px; }

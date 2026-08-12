@@ -92,6 +92,23 @@
       "requireCloseConfirmationForTopTier": true,
       "prioritizeFirstHealthyRetest": true
     },
+    "multiWaveCycle": {
+      "enabled": true,
+      "preserveParentWaveAfterPositionExit": true,
+      "appendNewWaveWithoutReplacingHistory": true,
+      "parentDefenseBreakRule": "laterCloseBelowBreakoutCandleLow",
+      "nextWaveRequires": [
+        "parentWaveDefenseUnbroken",
+        "newDescendingH1H2Line",
+        "redCandleCloseAboveNewLine",
+        "macdNegativeWeakeningOrPositiveRising",
+        "dpoUpturn"
+      ],
+      "defenseHierarchy": [
+        "firstWaveStructuralDefense",
+        "latestWaveTacticalDefense"
+      ]
+    },
     "previousKeyCandleLowStop": {
       "enabled": true,
       "appliesTo": "firstPostBreakoutConsolidation",

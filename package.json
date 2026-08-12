@@ -1,6 +1,6 @@
 {
   "name": "junshi-radar-pro",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "packageManager": "pnpm@10.34.5",
   "engines": {
@@ -19,7 +19,7 @@
     "test": "pnpm build && node --test tests/*.test.mjs",
     "dev:sites": "vinext dev",
     "build:sites": "vinext build",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .local",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

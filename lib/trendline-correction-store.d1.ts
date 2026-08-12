@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { trendlineCorrections } from "../db/schema";
 import type {
@@ -7,12 +7,16 @@ import type {
   TrendlineCorrectionAdjustment,
   TrendlineCorrectionTimeframe,
 } from "./trendline-corrections";
-import { trendlineCorrectionKey } from "./trendline-corrections";
+import {
+  trendlineCorrectionKey,
+  trendlineWaveKey,
+} from "./trendline-corrections";
 
 function toCorrection(
   row: typeof trendlineCorrections.$inferSelect,
 ): TrendlineCorrection {
   return {
+    id: row.id,
     symbol: row.symbol,
     timeframe: row.timeframe as TrendlineCorrectionTimeframe,
     adjustment: row.adjustment as TrendlineCorrectionAdjustment,
@@ -34,33 +38,54 @@ function toCorrection(
   };
 }
 
+export async function listD1TrendlineCorrections(
+  ownerId: string,
+  symbol: string,
+  timeframe: TrendlineCorrectionTimeframe,
+  adjustment: TrendlineCorrectionAdjustment,
+) {
+  const rows = await getDb()
+    .select()
+    .from(trendlineCorrections)
+    .where(
+      and(
+        eq(trendlineCorrections.ownerId, ownerId),
+        eq(trendlineCorrections.symbol, symbol),
+        eq(trendlineCorrections.timeframe, timeframe),
+        eq(trendlineCorrections.adjustment, adjustment),
+      ),
+    )
+    .orderBy(
+      asc(trendlineCorrections.h1Date),
+      asc(trendlineCorrections.h2Date),
+      asc(trendlineCorrections.createdAt),
+    );
+  return rows.map(toCorrection);
+}
+
 export async function getD1TrendlineCorrection(
   ownerId: string,
   symbol: string,
   timeframe: TrendlineCorrectionTimeframe,
   adjustment: TrendlineCorrectionAdjustment,
 ) {
-  const id = trendlineCorrectionKey(ownerId, symbol, timeframe, adjustment);
-  const [row] = await getDb()
-    .select()
-    .from(trendlineCorrections)
-    .where(eq(trendlineCorrections.id, id))
-    .limit(1);
-  return row ? toCorrection(row) : null;
+  return (
+    (await listD1TrendlineCorrections(
+      ownerId,
+      symbol,
+      timeframe,
+      adjustment,
+    )).at(-1) ?? null
+  );
 }
 
-export async function saveD1TrendlineCorrection(
+function correctionValues(
   ownerId: string,
   input: TrendlineCorrectionInput,
+  id: string,
+  now: string,
 ) {
-  const id = trendlineCorrectionKey(
-    ownerId,
-    input.symbol,
-    input.timeframe,
-    input.adjustment,
-  );
-  const now = new Date().toISOString();
-  const values = {
+  return {
     id,
     ownerId,
     symbol: input.symbol,
@@ -79,6 +104,58 @@ export async function saveD1TrendlineCorrection(
     submittedForLearning: input.submittedForLearning,
     updatedAt: now,
   };
+}
+
+export async function saveD1TrendlineCorrection(
+  ownerId: string,
+  input: TrendlineCorrectionInput,
+  correctionId?: string,
+) {
+  const now = new Date().toISOString();
+  const legacyId = trendlineCorrectionKey(
+    ownerId,
+    input.symbol,
+    input.timeframe,
+    input.adjustment,
+  );
+  const id = correctionId ?? legacyId;
+
+  if (correctionId) {
+    const [existing] = await getDb()
+      .select({ id: trendlineCorrections.id })
+      .from(trendlineCorrections)
+      .where(
+        and(
+          eq(trendlineCorrections.id, correctionId),
+          eq(trendlineCorrections.ownerId, ownerId),
+          eq(trendlineCorrections.symbol, input.symbol),
+          eq(trendlineCorrections.timeframe, input.timeframe),
+          eq(trendlineCorrections.adjustment, input.adjustment),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new Error("找不到要編輯的波段");
+  }
+
+  const values = correctionValues(ownerId, input, id, now);
+  const [row] = await getDb()
+    .insert(trendlineCorrections)
+    .values(values)
+    .onConflictDoUpdate({
+      target: trendlineCorrections.id,
+      set: values,
+    })
+    .returning();
+  return toCorrection(row);
+}
+
+export async function appendD1TrendlineCorrection(
+  ownerId: string,
+  input: TrendlineCorrectionInput,
+) {
+  const id = trendlineWaveKey(ownerId, input);
+  const now = new Date().toISOString();
+  const values = correctionValues(ownerId, input, id, now);
   const [row] = await getDb()
     .insert(trendlineCorrections)
     .values(values)
@@ -95,11 +172,18 @@ export async function deleteD1TrendlineCorrection(
   symbol: string,
   timeframe: TrendlineCorrectionTimeframe,
   adjustment: TrendlineCorrectionAdjustment,
+  correctionId?: string,
 ) {
-  const id = trendlineCorrectionKey(ownerId, symbol, timeframe, adjustment);
+  const conditions = [
+    eq(trendlineCorrections.ownerId, ownerId),
+    eq(trendlineCorrections.symbol, symbol),
+    eq(trendlineCorrections.timeframe, timeframe),
+    eq(trendlineCorrections.adjustment, adjustment),
+  ];
+  if (correctionId) conditions.push(eq(trendlineCorrections.id, correctionId));
   const rows = await getDb()
     .delete(trendlineCorrections)
-    .where(eq(trendlineCorrections.id, id))
+    .where(and(...conditions))
     .returning({ id: trendlineCorrections.id });
   return rows.length > 0;
 }

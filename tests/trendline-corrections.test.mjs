@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   normalizeTrendlineCorrectionInput,
   trendlineCorrectionKey,
+  trendlineWaveKey,
 } from "../lib/trendline-corrections.ts";
 
 function validInput(overrides = {}) {
@@ -53,5 +54,17 @@ test("separates corrections by owner, stock, timeframe and adjustment", () => {
   assert.notEqual(
     dayAdjusted,
     trendlineCorrectionKey("user-1", "1517", "day", "adjusted"),
+  );
+});
+
+test("stores separate wave lines without replacing the parent wave", () => {
+  const first = validInput();
+  const second = validInput({
+    h1: { date: "2026-07-18", price: 40 },
+    h2: { date: "2026-08-09", price: 36 },
+  });
+  assert.notEqual(
+    trendlineWaveKey("user-1", first),
+    trendlineWaveKey("user-1", second),
   );
 });

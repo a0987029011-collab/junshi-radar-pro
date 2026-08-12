@@ -9,18 +9,24 @@ const LOCAL_OWNER_ID = "local-dev";
 
 type CorrectionInput = ReturnType<typeof normalizeTrendlineCorrectionInput>;
 type CorrectionStore = {
-  get(
+  list(
     ownerId: string,
     symbol: string,
     timeframe: TrendlineCorrectionTimeframe,
     adjustment: TrendlineCorrectionAdjustment,
+  ): Promise<unknown[]>;
+  save(
+    ownerId: string,
+    input: CorrectionInput,
+    correctionId?: string,
   ): Promise<unknown>;
-  save(ownerId: string, input: CorrectionInput): Promise<unknown>;
+  append(ownerId: string, input: CorrectionInput): Promise<unknown>;
   remove(
     ownerId: string,
     symbol: string,
     timeframe: TrendlineCorrectionTimeframe,
     adjustment: TrendlineCorrectionAdjustment,
+    correctionId?: string,
   ): Promise<boolean>;
 };
 
@@ -42,16 +48,18 @@ async function getStore(request: Request): Promise<CorrectionStore> {
   if (isLocalHost(new URL(request.url))) {
     const local = await import("../../../lib/trendline-correction-store.local");
     return {
-      get: local.getLocalTrendlineCorrection,
+      list: local.listLocalTrendlineCorrections,
       save: local.saveLocalTrendlineCorrection,
+      append: local.appendLocalTrendlineCorrection,
       remove: local.deleteLocalTrendlineCorrection,
     };
   }
 
   const d1 = await import("../../../lib/trendline-correction-store.d1");
   return {
-    get: d1.getD1TrendlineCorrection,
+    list: d1.listD1TrendlineCorrections,
     save: d1.saveD1TrendlineCorrection,
+    append: d1.appendD1TrendlineCorrection,
     remove: d1.deleteD1TrendlineCorrection,
   };
 }
@@ -84,13 +92,16 @@ export async function GET(request: Request) {
       return Response.json({ error: "請先登入後再讀取校正" }, { status: 401 });
     }
     const lookup = readLookup(new URL(request.url));
-    const correction = await (await getStore(request)).get(
+    const corrections = await (await getStore(request)).list(
       ownerId,
       lookup.symbol,
       lookup.timeframe,
       lookup.adjustment,
     );
-    return Response.json({ correction });
+    return Response.json({
+      corrections,
+      correction: corrections.at(-1) ?? null,
+    });
   } catch (error) {
     return errorResponse(error);
   }
@@ -102,9 +113,42 @@ export async function PUT(request: Request) {
     if (!ownerId) {
       return Response.json({ error: "請先登入後再儲存校正" }, { status: 401 });
     }
+    const payload = (await request.json()) as Record<string, unknown>;
+    const input = normalizeTrendlineCorrectionInput(payload);
+    const correctionId =
+      typeof payload.correctionId === "string"
+        ? payload.correctionId.trim()
+        : undefined;
+    const store = await getStore(request);
+    await store.save(ownerId, input, correctionId);
+    const corrections = await store.list(
+      ownerId,
+      input.symbol,
+      input.timeframe,
+      input.adjustment,
+    );
+    return Response.json({ corrections, correction: corrections.at(-1) });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const ownerId = getOwnerId(request);
+    if (!ownerId) {
+      return Response.json({ error: "請先登入後再新增波段" }, { status: 401 });
+    }
     const input = normalizeTrendlineCorrectionInput(await request.json());
-    const correction = await (await getStore(request)).save(ownerId, input);
-    return Response.json({ correction });
+    const store = await getStore(request);
+    await store.append(ownerId, input);
+    const corrections = await store.list(
+      ownerId,
+      input.symbol,
+      input.timeframe,
+      input.adjustment,
+    );
+    return Response.json({ corrections, correction: corrections.at(-1) });
   } catch (error) {
     return errorResponse(error);
   }
@@ -117,13 +161,27 @@ export async function DELETE(request: Request) {
       return Response.json({ error: "請先登入後再刪除校正" }, { status: 401 });
     }
     const lookup = readLookup(new URL(request.url));
-    const deleted = await (await getStore(request)).remove(
+    const correctionId =
+      new URL(request.url).searchParams.get("correctionId")?.trim() || undefined;
+    const store = await getStore(request);
+    const deleted = await store.remove(
+      ownerId,
+      lookup.symbol,
+      lookup.timeframe,
+      lookup.adjustment,
+      correctionId,
+    );
+    const corrections = await store.list(
       ownerId,
       lookup.symbol,
       lookup.timeframe,
       lookup.adjustment,
     );
-    return Response.json({ deleted });
+    return Response.json({
+      deleted,
+      corrections,
+      correction: corrections.at(-1) ?? null,
+    });
   } catch (error) {
     return errorResponse(error);
   }

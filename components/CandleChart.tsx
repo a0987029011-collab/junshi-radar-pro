@@ -9,6 +9,11 @@ import {
 } from "react";
 import { DPO_PERIOD } from "../lib/indicators.ts";
 import {
+  getCurrentTrendlineWave,
+  getTrendlineWaveStates,
+  type TrendlineWaveState
+} from "../lib/multi-wave-strategy";
+import {
   getAnchoredEndOffset,
   getPannedEndOffset,
   getPinchVisibleBars,
@@ -96,7 +101,7 @@ function drawChart(
   requestedViewEndOffset: number,
   inspectedIndex?: number,
   manualLine?: TrackingLineSegment,
-  intradaySnapshot = false
+  historicalWaves: TrendlineWaveState[] = []
 ) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -140,14 +145,42 @@ function drawChart(
   const breakoutLowLines: Array<{
     line: BreakoutLowLine;
     current: boolean;
+    label: string;
   }> = [];
-  if (historicalBreakoutLowLine && !sameSupportLine) {
-    breakoutLowLines.push({ line: historicalBreakoutLowLine, current: false });
+  for (const wave of historicalWaves) {
+    if (wave.defense) {
+      breakoutLowLines.push({
+        line: wave.defense,
+        current: false,
+        label: `第 ${wave.waveNumber} 波防守`
+      });
+    }
+  }
+  if (
+    historicalWaves.length === 0 &&
+    historicalBreakoutLowLine &&
+    !sameSupportLine
+  ) {
+    breakoutLowLines.push({
+      line: historicalBreakoutLowLine,
+      current: false,
+      label: "過往防守"
+    });
   }
   if (currentBreakoutLowLine) {
-    breakoutLowLines.push({ line: currentBreakoutLowLine, current: true });
+    breakoutLowLines.push({
+      line: currentBreakoutLowLine,
+      current: true,
+      label: historicalWaves.length
+        ? `第 ${historicalWaves.length + 1} 波防守`
+        : "目前防守"
+    });
   } else if (historicalBreakoutLowLine) {
-    breakoutLowLines.push({ line: historicalBreakoutLowLine, current: true });
+    breakoutLowLines.push({
+      line: historicalBreakoutLowLine,
+      current: true,
+      label: "目前防守"
+    });
   }
   const visibleBreakoutLowLines = breakoutLowLines.filter(
     ({ line }) => line.endIndex >= viewStart && line.signalIndex <= viewEnd
@@ -219,7 +252,7 @@ function drawChart(
     ctx.globalAlpha = 1;
   });
 
-  visibleBreakoutLowLines.forEach(({ line, current }) => {
+  visibleBreakoutLowLines.forEach(({ line, current, label }) => {
     const startIndex = Math.max(line.signalIndex, viewStart);
     const clippedEndIndex = Math.min(line.endIndex, viewEnd);
     const y = toPriceY(line.price);
@@ -241,7 +274,7 @@ function drawChart(
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillText(
-      `${current ? "目前" : "過往"}防守 ${formatPrice(line.price)}`,
+      `${label} ${formatPrice(line.price)}`,
       line.active
         ? Math.max(pad.left, endX - 112)
         : Math.min(width - pad.right - 48, endX + 6),
@@ -288,6 +321,10 @@ function drawChart(
     latestSignal,
     line: displayedLine
   } = getSystemDisplayTrendline(trace);
+
+  historicalWaves.forEach((wave) => {
+    if (wave.line) drawLine(wave.line, viewEnd, "#c08add", 0.52, true);
+  });
 
   if (displayedLine && displayedLine.slope < 0) {
     drawLine(
@@ -552,9 +589,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [visibleBars, setVisibleBars] = useState(DEFAULT_VISIBLE_BARS);
   const [viewEndOffset, setViewEndOffset] = useState(0);
   const [inspectedIndex, setInspectedIndex] = useState<number>();
-  const [correction, setCorrection] = useState<TrendlineCorrection | null>(null);
+  const [corrections, setCorrections] = useState<TrendlineCorrection[]>([]);
   const [correctionLoading, setCorrectionLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [editingMode, setEditingMode] = useState<"edit" | "append">("edit");
   const [draft, setDraft] = useState<EditableTrendline>();
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
@@ -600,12 +638,35 @@ export function CandleChart({ symbol }: { symbol: string }) {
     [candles, trace]
   );
   const systemTrendline = useMemo(() => getSystemDisplayTrendline(trace), [trace]);
+  const visibleCorrections = useMemo(
+    () => corrections.filter(
+      (item) =>
+        item.symbol === symbol &&
+        item.timeframe === timeframe &&
+        item.adjustment === adjustment
+    ),
+    [adjustment, corrections, symbol, timeframe]
+  );
+  const correction = visibleCorrections.at(-1) ?? null;
   const visibleCorrection =
     correction?.symbol === symbol &&
     correction.timeframe === timeframe &&
     correction.adjustment === adjustment
       ? correction
       : null;
+  const waveStates = useMemo(
+    () => getTrendlineWaveStates(candles, visibleCorrections),
+    [candles, visibleCorrections]
+  );
+  const currentWave = getCurrentTrendlineWave(waveStates);
+  const historicalWaves = useMemo(
+    () => currentWave
+      ? waveStates.filter(
+          (wave) => wave.correction.id !== currentWave.correction.id
+        )
+      : [],
+    [currentWave, waveStates]
+  );
   const correctionEditable = useMemo<EditableTrendline | undefined>(() => {
     if (!visibleCorrection) return undefined;
     const h1Index = candles.findIndex((candle) => candle.time === visibleCorrection.h1.date);
@@ -631,15 +692,20 @@ export function CandleChart({ symbol }: { symbol: string }) {
       : undefined;
   }, [candles, manualLine, systemTrendline]);
   const currentSupportLine =
-    (currentBreakoutLowLine?.active ? currentBreakoutLowLine : undefined) ??
+    (editing && currentBreakoutLowLine?.active
+      ? currentBreakoutLowLine
+      : currentWave?.defense?.active
+        ? currentWave.defense
+        : undefined) ??
     historicalBreakoutLowLine;
   const historicalSupportLine =
-    historicalBreakoutLowLine &&
+    historicalWaves.find((wave) => wave.defense?.active)?.defense ??
+    (historicalBreakoutLowLine &&
     currentBreakoutLowLine &&
     (historicalBreakoutLowLine.signalIndex !== currentBreakoutLowLine.signalIndex ||
       historicalBreakoutLowLine.price !== currentBreakoutLowLine.price)
       ? historicalBreakoutLowLine
-      : undefined;
+      : undefined);
   const dataNote = getMarketDataNote(symbol);
   const minimumVisibleBars = Math.min(MIN_VISIBLE_BARS, candles.length);
   const viewport = resolveChartViewport(
@@ -754,8 +820,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
     };
   };
 
-  const startEditing = () => {
-    const nextDraft = correctionEditable ?? createSystemDraft();
+  const startEditing = (mode: "edit" | "append" = "edit") => {
+    const nextDraft = mode === "edit"
+      ? correctionEditable ?? createSystemDraft()
+      : createSystemDraft();
     if (!nextDraft) {
       setFeedback("目前沒有可編輯的下降趨勢線。");
       return;
@@ -767,6 +835,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
     setViewEndOffset(0);
     setInspectedIndex(undefined);
     setFeedback("");
+    setEditingMode(mode);
     setEditing(true);
   };
 
@@ -845,23 +914,33 @@ export function CandleChart({ symbol }: { symbol: string }) {
     setFeedback("正在儲存校正…");
     try {
       const response = await fetch(correctionUrl, {
-        method: "PUT",
+        method: editingMode === "append" ? "POST" : "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(input)
+        body: JSON.stringify({
+          ...input,
+          ...(editingMode === "edit" && visibleCorrection
+            ? { correctionId: visibleCorrection.id }
+            : {})
+        })
       });
       const payload = (await response.json()) as {
         correction?: TrendlineCorrection;
+        corrections?: TrendlineCorrection[];
         error?: string;
       };
-      if (!response.ok || !payload.correction) {
+      if (!response.ok || !payload.correction || !payload.corrections) {
         throw new Error(payload.error ?? "儲存失敗");
       }
-      setCorrection(payload.correction);
+      setCorrections(payload.corrections);
       setEditing(false);
+      const savedWaveNumber =
+        payload.corrections.findIndex(
+          (item) => item.id === payload.correction?.id
+        ) + 1;
       setFeedback(
         payload.correction.submittedForLearning
-          ? "已儲存，並加入邏輯學習案例。"
-          : "已儲存這檔股票的人工趨勢線。"
+          ? `已儲存第 ${savedWaveNumber} 波，並加入邏輯學習案例。`
+          : `已儲存第 ${savedWaveNumber} 波趨勢線。`
       );
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "儲存失敗");
@@ -874,13 +953,23 @@ export function CandleChart({ symbol }: { symbol: string }) {
     setSaving(true);
     setFeedback("正在還原系統趨勢線…");
     try {
-      const response = await fetch(correctionUrl, { method: "DELETE" });
-      const payload = (await response.json()) as { error?: string };
+      const deleteUrl = visibleCorrection
+        ? `${correctionUrl}&correctionId=${encodeURIComponent(visibleCorrection.id)}`
+        : correctionUrl;
+      const response = await fetch(deleteUrl, { method: "DELETE" });
+      const payload = (await response.json()) as {
+        corrections?: TrendlineCorrection[];
+        error?: string;
+      };
       if (!response.ok) throw new Error(payload.error ?? "還原失敗");
-      setCorrection(null);
+      setCorrections(payload.corrections ?? []);
       setDraft(undefined);
       setEditing(false);
-      setFeedback("已刪除人工校正，恢復顯示系統趨勢線。");
+      setFeedback(
+        payload.corrections?.length
+          ? "已刪除目前波段，前一波仍保留。"
+          : "已刪除人工波段，恢復顯示系統趨勢線。"
+      );
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "還原失敗");
     } finally {
@@ -1031,10 +1120,11 @@ export function CandleChart({ symbol }: { symbol: string }) {
       .then(async (response) => {
         const payload = (await response.json()) as {
           correction?: TrendlineCorrection | null;
+          corrections?: TrendlineCorrection[];
           error?: string;
         };
         if (!response.ok) throw new Error(payload.error ?? "讀取校正失敗");
-        setCorrection(payload.correction ?? null);
+        setCorrections(payload.corrections ?? (payload.correction ? [payload.correction] : []));
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1058,7 +1148,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
         viewEndOffset,
         inspectedIndex,
         manualLine,
-        intradaySnapshot
+        historicalWaves
       );
     redraw();
     const observer = new ResizeObserver(redraw);
@@ -1066,8 +1156,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
     return () => observer.disconnect();
   }, [
     candles,
+    historicalWaves,
     inspectedIndex,
-    intradaySnapshot,
     manualLine,
     trace,
     viewEndOffset,
@@ -1086,7 +1176,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
               onClick={() => {
                 if (item.value !== timeframe) {
                   setCorrectionLoading(true);
-                  setCorrection(null);
+                  setCorrections([]);
                   setDraft(undefined);
                   setEditing(false);
                   setFeedback("");
@@ -1109,7 +1199,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
               onClick={() => {
                 if (adjustment !== "adjusted") {
                   setCorrectionLoading(true);
-                  setCorrection(null);
+                  setCorrections([]);
                   setDraft(undefined);
                   setEditing(false);
                   setFeedback("");
@@ -1127,7 +1217,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
               onClick={() => {
                 if (adjustment !== "raw") {
                   setCorrectionLoading(true);
-                  setCorrection(null);
+                  setCorrections([]);
                   setDraft(undefined);
                   setEditing(false);
                   setFeedback("");
@@ -1179,17 +1269,27 @@ export function CandleChart({ symbol }: { symbol: string }) {
               setEditing(false);
               setFeedback("");
             } else {
-              startEditing();
+              startEditing("edit");
             }
           }}
           type="button"
         >
-          {editing ? "取消編輯" : visibleCorrection ? "編輯人工線" : "編輯趨勢線"}
+          {editing ? "取消編輯" : visibleCorrection ? "編輯目前波" : "編輯趨勢線"}
         </button>
+        {visibleCorrection && !editing ? (
+          <button
+            className="trendline-edit-button"
+            disabled={correctionLoading || saving || !systemTrendline.line}
+            onClick={() => startEditing("append")}
+            type="button"
+          >
+            ＋ 新增下一波
+          </button>
+        ) : null}
         <div className="chart-legend">
           <span><i className="legend-dot" style={{ background: "var(--amber)" }} />H1</span>
           <span><i className="legend-dot" style={{ background: "var(--blue)" }} />系統趨勢線</span>
-          {manualLine ? <span><i className="legend-dot trendline-manual-dot" />人工趨勢線</span> : null}
+          {manualLine ? <span><i className="legend-dot trendline-manual-dot" />人工波段線</span> : null}
           <span><i className="legend-dot" style={{ background: "var(--up)" }} />紅 K 穿越</span>
           {historicalSupportLine ? <span><i className="legend-dot" style={{ background: "#ff9aa1" }} />過往防守</span> : null}
           {currentSupportLine ? <span><i className="legend-dot" style={{ background: "#ffd166" }} />目前防守</span> : null}
@@ -1212,7 +1312,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
           ? `｜系統 H1 ${systemTrendline.h1.date} → H2 ${systemTrendline.line.endDate}`
           : ""}
         {manualLine
-          ? `｜人工 H1 ${manualLine.h1Date} → H2 ${manualLine.endDate}`
+          ? `｜第 ${editingMode === "append" ? visibleCorrections.length + 1 : Math.max(1, visibleCorrections.length)} 波 H1 ${manualLine.h1Date} → H2 ${manualLine.endDate}`
           : ""}
         {historicalSupportLine
           ? `｜過往防守 ${formatPrice(historicalSupportLine.price)}`
@@ -1272,8 +1372,12 @@ export function CandleChart({ symbol }: { symbol: string }) {
         <div className="trendline-editor">
           <div className="trendline-editor-head">
             <div>
-              <strong>校正這檔股票的趨勢線</strong>
-              <p>拖曳圖上的紫色 H1、H2 圓點；錨點會吸附到該根 K 棒最高價。</p>
+              <strong>
+                {editingMode === "append"
+                  ? `新增第 ${visibleCorrections.length + 1} 波趨勢線`
+                  : `編輯第 ${Math.max(1, visibleCorrections.length)} 波趨勢線`}
+              </strong>
+              <p>每一波會分開保存；新增下一波不會覆蓋第一波與原始生命線。</p>
             </div>
             <span className="trendline-local-badge">只影響 {symbol}</span>
           </div>
@@ -1288,7 +1392,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
               </small>
             </div>
             <div className="trendline-compare-card manual">
-              <span>你的人工線</span>
+              <span>{editingMode === "append" ? "新的波段線" : "目前波段線"}</span>
               <strong>{manualLine.h1Date} → {manualLine.endDate}</strong>
               <small>H1 {formatPrice(manualLine.startPrice)} · H2 {formatPrice(manualLine.endPrice)}</small>
             </div>
@@ -1353,7 +1457,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             >
               重設錨點
             </button>
-            {visibleCorrection ? (
+            {visibleCorrection && editingMode === "edit" ? (
               <button
                 className="danger-button"
                 disabled={saving}
@@ -1369,18 +1473,57 @@ export function CandleChart({ symbol }: { symbol: string }) {
               onClick={saveCorrection}
               type="button"
             >
-              {saving ? "儲存中…" : "儲存人工線"}
+              {saving
+                ? "儲存中…"
+                : editingMode === "append"
+                  ? `儲存第 ${visibleCorrections.length + 1} 波`
+                  : "儲存目前波段"}
             </button>
           </div>
         </div>
-      ) : visibleCorrection && correctionEditable && manualLine ? (
-        <div className="trendline-correction-summary">
-          <div>
-            <strong>已套用人工趨勢線</strong>
-            <span>{manualLine.h1Date} → {manualLine.endDate} · {visibleCorrection.reason}</span>
+      ) : waveStates.length ? (
+        <div className="trendline-wave-list">
+          <div className="trendline-wave-list-head">
+            <div>
+              <strong>多波段策略紀錄</strong>
+              <span>新增後保留前波；賣出持股不會刪除仍有效的大結構。</span>
+            </div>
+            <em>{waveStates.length} 波</em>
           </div>
-          {visibleCorrection.submittedForLearning ? <em>邏輯學習案例</em> : null}
-          <button disabled={saving} onClick={deleteCorrection} type="button">還原系統線</button>
+          <div className="trendline-wave-grid">
+            {waveStates.map((wave) => (
+              <article
+                className={`trendline-wave-card ${wave.status}`}
+                key={wave.correction.id}
+              >
+                <div>
+                  <strong>第 {wave.waveNumber} 波</strong>
+                  <span>{wave.correction.h1.date} → {wave.correction.h2.date}</span>
+                </div>
+                <div>
+                  <small>{wave.defense ? "突破生命線" : "目前狀態"}</small>
+                  <b>
+                    {wave.status === "active" && wave.defense
+                      ? formatPrice(wave.defense.price)
+                      : wave.status === "failed"
+                        ? "本波已失效"
+                        : wave.status === "parent-invalid"
+                          ? "第一波已失效"
+                          : "等待紅 K 穿線"}
+                  </b>
+                </div>
+                {wave.correction.submittedForLearning ? <em>學習案例</em> : null}
+              </article>
+            ))}
+          </div>
+          <div className="trendline-wave-actions">
+            <button disabled={saving} onClick={() => startEditing("edit")} type="button">
+              編輯目前波
+            </button>
+            <button disabled={saving} onClick={deleteCorrection} type="button">
+              刪除目前波
+            </button>
+          </div>
         </div>
       ) : null}
       {feedback ? <div className="trendline-feedback" role="status">{feedback}</div> : null}

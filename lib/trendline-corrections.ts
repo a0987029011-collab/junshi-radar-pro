@@ -30,6 +30,7 @@ export interface TrendlineCorrectionInput {
 }
 
 export interface TrendlineCorrection extends TrendlineCorrectionInput {
+  id: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,6 +124,27 @@ export function trendlineCorrectionKey(
   adjustment: TrendlineCorrectionAdjustment,
 ) {
   return [ownerId, symbol, timeframe, adjustment]
+    .map((part) => encodeURIComponent(part))
+    .join(":");
+}
+
+export function trendlineWaveKey(
+  ownerId: string,
+  input: Pick<
+    TrendlineCorrectionInput,
+    "symbol" | "timeframe" | "adjustment" | "h1" | "h2"
+  >,
+) {
+  return [
+    trendlineCorrectionKey(
+      ownerId,
+      input.symbol,
+      input.timeframe,
+      input.adjustment,
+    ),
+    input.h1.date,
+    input.h2.date,
+  ]
     .map((part) => encodeURIComponent(part))
     .join(":");
 }

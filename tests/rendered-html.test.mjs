@@ -65,7 +65,7 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.4\.1/);
+  assert.match(html, /版本 0\.5\.0/);
   assert.match(html, /更新時間/);
   assert.match(html, /2026-08-11/);
   assert.doesNotMatch(html, /重新計算/);
@@ -115,4 +115,17 @@ test("server-renders the position risk page", async () => {
   assert.doesNotMatch(html, /預設資金規則/);
   assert.doesNotMatch(html, /第一目標價/);
   assert.doesNotMatch(html, /淨風險報酬比/);
+});
+
+test("server-renders the multi-wave strategy contract", async () => {
+  const response = await render("/strategy");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /下降趨勢線多波段策略/);
+  assert.match(html, /第一波不被後續波段覆蓋/);
+  assert.match(html, /第二波再觸發/);
+  assert.match(html, /2637 慧洋-KY/);
+  assert.match(html, /大結構生命線 35\.17/);
+  assert.match(html, /近端生命線 50\.52/);
+  assert.doesNotMatch(html, /100 分權重/);
 });
