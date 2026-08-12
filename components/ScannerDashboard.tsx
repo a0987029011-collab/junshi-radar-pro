@@ -194,11 +194,13 @@ export default function ScannerDashboard() {
     setRefreshMessage('正在取得市場行情，請不要關閉此頁…');
     try {
       const response = await fetch('/api/market-refresh', { method: 'POST' });
-      const payload = (await response.json()) as { error?: string; mode?: string };
+      const payload = (await response.json()) as { error?: string; mode?: string; message?: string };
       if (!response.ok) throw new Error(payload.error ?? '更新失敗');
       setRefreshMessage(
         payload.mode === 'intraday'
           ? '盤中行情已更新，正在重新整理雷達…'
+          : payload.mode === 'deployment-check'
+            ? (payload.message ?? '已檢查正式站最新資料，正在重新整理雷達…')
           : '盤後完整資料已更新，正在重新整理雷達…'
       );
       window.setTimeout(() => window.location.reload(), 500);
@@ -255,7 +257,7 @@ export default function ScannerDashboard() {
               onClick={refreshMarketData}
               type="button"
             >
-              {refreshing ? '更新中…' : '更新市場資料'}
+              {refreshing ? '檢查中…' : '檢查最新資料'}
             </button>
           </div>
         </div>

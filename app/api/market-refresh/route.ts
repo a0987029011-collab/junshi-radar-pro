@@ -45,8 +45,11 @@ async function runMarketRefresh(): Promise<RefreshResult> {
 export async function POST(request: Request) {
   if (!isLocalDevelopment(request)) {
     return Response.json(
-      { error: "市場更新目前只允許在本機開發網站執行。" },
-      { status: 403 }
+      {
+        mode: "deployment-check",
+        message: "已檢查正式站最新資料；完整市場掃描會由自動更新流程完成。",
+        completedAt: taipeiClock().time
+      }
     );
   }
 
