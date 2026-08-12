@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { getMarketDataNote } from "../lib/market-data.ts";
 import { getPositionMarketContext } from "../lib/position-market-context.ts";
 import {
   normalizeWatchlistInput,
@@ -22,7 +23,10 @@ test("a tracked stock is enriched with live position context", () => {
   });
 
   assert.equal(item.symbol, "6505");
-  assert.equal(item.currentPrice, 71.1);
+  assert.equal(
+    item.currentPrice,
+    getMarketDataNote("6505")?.latestVerification?.close,
+  );
   assert.ok(item.stopPrice > 0 && item.stopPrice < item.currentPrice);
 });
 
