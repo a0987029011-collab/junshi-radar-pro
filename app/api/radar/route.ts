@@ -32,6 +32,8 @@ export async function GET() {
       closeConfirmation: item.closeConfirmation,
       breakoutType: item.breakoutType,
       macdWeakening: item.macdWeakening,
+      macdPositiveRising: item.macdPositiveRising,
+      macdSignalMode: item.macdSignalMode,
       dpoUpturn: item.dpoUpturn,
       signalDate: item.signalDate,
       signalOnLatestBar: item.signalOnLatestBar

@@ -4,6 +4,7 @@ import type { CandlePoint, StockProfile } from './stockData.ts';
 export const BREAKOUT_SIGNAL_NAME = '下降趨勢線紅 K 穿越';
 
 export type BreakoutType = 'body-cross' | 'gap-above';
+export type MacdSignalMode = 'negative-weakening' | 'positive-rising';
 
 export const BREAKOUT_TYPE_LABELS: Record<BreakoutType, string> = {
   'body-cross': '紅 K 實體穿越',
@@ -51,6 +52,8 @@ export interface TrendlineEvaluation {
   breakoutType?: BreakoutType;
   redCandle: boolean;
   macdWeakening: boolean;
+  macdPositiveRising: boolean;
+  macdSignalMode?: MacdSignalMode;
   dpoUpturn: boolean;
   intradayWarning: boolean;
   closeConfirmation: boolean;
@@ -184,6 +187,8 @@ export interface H1TrendlineScan {
 }
 
 export interface IndicatorInput {
+  macd?: number[];
+  macdSignal?: number[];
   macdHistogram?: number[];
   dpo?: number[];
 }
@@ -207,6 +212,8 @@ export interface ScanResultItem extends StockProfile {
   closeConfirmation: boolean;
   breakoutType?: BreakoutType;
   macdWeakening: boolean;
+  macdPositiveRising: boolean;
+  macdSignalMode?: MacdSignalMode;
   dpoUpturn: boolean;
   signalDate?: string;
   signalOnLatestBar: boolean;
@@ -250,6 +257,20 @@ export function isMacdWeakening(histogram: number[], index: number) {
   );
 }
 
+export function isMacdPositiveRising(
+  macd: number[],
+  signal: number[],
+  index: number
+) {
+  if (index < 1) return false;
+  return (
+    macd[index] > 0 &&
+    signal[index] > 0 &&
+    macd[index] > macd[index - 1] &&
+    signal[index] > signal[index - 1]
+  );
+}
+
 export function isDpoUpturn(dpo: number[], index: number) {
   if (index < 2) return false;
   const beforeLow = dpo[index - 2];
@@ -274,8 +295,10 @@ export function scanH1Trendline(
   indicatorInput: IndicatorInput = {}
 ): H1TrendlineScan {
   const closes = candles.map((candle) => candle.close);
-  const macdHistogram =
-    indicatorInput.macdHistogram ?? calculateMacd(closes).histogram;
+  const calculatedMacd = calculateMacd(closes);
+  const macd = indicatorInput.macd ?? calculatedMacd.macd;
+  const macdSignal = indicatorInput.macdSignal ?? calculatedMacd.signal;
+  const macdHistogram = indicatorInput.macdHistogram ?? calculatedMacd.histogram;
   const dpo = indicatorInput.dpo ?? calculateDpo(closes);
 
   const h1Points: H1Point[] = [];
@@ -331,6 +354,12 @@ export function scanH1Trendline(
     const gapAboveLine = candle.open > linePrice && closeCrossed;
     const redCandle = candle.close > candle.open;
     const macdWeakening = isMacdWeakening(macdHistogram, index);
+    const macdPositiveRising = isMacdPositiveRising(macd, macdSignal, index);
+    const macdSignalMode: MacdSignalMode | undefined = macdPositiveRising
+      ? 'positive-rising'
+      : macdWeakening
+        ? 'negative-weakening'
+        : undefined;
     const dpoUpturn = isDpoUpturn(dpo, index);
     const lineKey = `${activeH1.roundId}:${currentLine.endIndex}`;
     const lineAlreadyNotified = notifiedLineKeys.has(lineKey);
@@ -338,13 +367,13 @@ export function scanH1Trendline(
       !lineAlreadyNotified &&
       highCrossed &&
       redCandle &&
-      macdWeakening &&
+      macdSignalMode !== undefined &&
       dpoUpturn;
     const closeConfirmation =
       !lineAlreadyNotified &&
       closeCrossed &&
       redCandle &&
-      macdWeakening &&
+      macdSignalMode !== undefined &&
       dpoUpturn;
     const breakoutType: BreakoutType | undefined = closeConfirmation
       ? bodyCrossed
@@ -367,6 +396,8 @@ export function scanH1Trendline(
       breakoutType,
       redCandle,
       macdWeakening,
+      macdPositiveRising,
+      macdSignalMode,
       dpoUpturn,
       intradayWarning,
       closeConfirmation,
@@ -470,6 +501,8 @@ export function scanStock(stock: StockProfile): ScanResultItem {
     closeConfirmation,
     breakoutType: signalOnLatestBar ? latestSignal?.breakoutType : undefined,
     macdWeakening: currentEvaluation?.macdWeakening ?? false,
+    macdPositiveRising: currentEvaluation?.macdPositiveRising ?? false,
+    macdSignalMode: currentEvaluation?.macdSignalMode,
     dpoUpturn: currentEvaluation?.dpoUpturn ?? false,
     signalDate: latestSignal?.date,
     signalOnLatestBar,

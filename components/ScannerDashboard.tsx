@@ -16,7 +16,7 @@ import { importedStocks } from '../lib/stockData';
 const marketFilterOptions = ['全部', '上市', '上櫃'] as const;
 
 type MarketFilter = (typeof marketFilterOptions)[number];
-type SignalPage = 'body-cross' | 'gap-above' | 'intraday-warning';
+type SignalPage = 'negative-body-cross' | 'positive-body-cross' | 'gap-above' | 'intraday-warning';
 
 function formatPrice(value?: number) {
   if (value === undefined || !Number.isFinite(value)) return '—';
@@ -95,8 +95,8 @@ function ResultCard({
         <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(redCandle)}`}>
           紅 K {redCandle ? '✓' : '—'}
         </div>
-        <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(item.macdWeakening)}`}>
-          MACD {item.macdWeakening ? '✓' : '—'}
+        <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(Boolean(item.macdSignalMode))}`}>
+          {item.macdPositiveRising ? '零上雙升 ✓' : item.macdWeakening ? '負柱縮短 ✓' : 'MACD —'}
         </div>
         <div className={`rounded-xl bg-slate-900/80 px-3 py-3 ${conditionClass(item.dpoUpturn)}`}>
           DPO {item.dpoUpturn ? '✓' : '—'}
@@ -113,7 +113,7 @@ function ResultCard({
 
 export default function ScannerDashboard() {
   const [marketFilter, setMarketFilter] = useState<MarketFilter>('全部');
-  const [activeSignalPage, setActiveSignalPage] = useState<SignalPage>('body-cross');
+  const [activeSignalPage, setActiveSignalPage] = useState<SignalPage>('negative-body-cross');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
   const isIntradaySnapshot =
@@ -147,8 +147,11 @@ export default function ScannerDashboard() {
   const isCurrentIntradaySignal = (item: ScanResultItem) =>
     item.signalOnLatestBar && (item.intradayWarning || item.closeConfirmation);
 
-  const bodyCrossResults = scanResults.filter(
-    (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'body-cross'
+  const negativeBodyCrossResults = scanResults.filter(
+    (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'body-cross' && item.macdSignalMode === 'negative-weakening'
+  );
+  const positiveBodyCrossResults = scanResults.filter(
+    (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'body-cross' && item.macdSignalMode === 'positive-rising'
   );
   const gapAboveResults = scanResults.filter(
     (item) => !isIntradaySnapshot && item.closeConfirmation && item.breakoutType === 'gap-above'
@@ -160,11 +163,18 @@ export default function ScannerDashboard() {
   );
   const signalPages = [
     {
-      id: 'body-cross',
-      title: '紅 K 實體穿越',
-      description: 'open ≤ 當根線價 < close；下降線確實穿過紅 K 實體。',
-      items: bodyCrossResults,
+      id: 'negative-body-cross',
+      title: '負柱縮短穿越',
+      description: 'MACD 負柱縮短、DPO 上彎，且下降線穿過紅 K 實體。',
+      items: negativeBodyCrossResults,
       tone: 'text-rose-200'
+    },
+    {
+      id: 'positive-body-cross',
+      title: '零軸上雙線向上',
+      description: 'MACD 與訊號線都在零軸上、雙線同步向上，DPO 上彎且紅 K 實體穿越下降線。',
+      items: positiveBodyCrossResults,
+      tone: 'text-emerald-200'
     },
     {
       id: 'gap-above',
@@ -223,7 +233,7 @@ export default function ScannerDashboard() {
             </h1>
             <p className="mt-4 max-w-3xl leading-7 text-slate-300">
               H1 次根確認後立即連線；每根 K 先用既有線判斷，再於未觸發時接入當根 high。
-              訊號同根確認紅 K、MACD 負柱縮短與 DPO 上彎；收盤確認再依開盤價分為實體穿越與跳空站上。
+              訊號同根確認紅 K、DPO 上彎，以及 MACD「負柱縮短」或「零軸上雙線向上」；收盤確認再依開盤價分為實體穿越與跳空站上。
             </p>
             <div className={`mt-5 inline-flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
               isIntradaySnapshot

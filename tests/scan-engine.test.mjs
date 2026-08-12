@@ -170,6 +170,30 @@ test("red K plus a weakening negative MACD histogram and DPO upturn triggers on 
   assert.equal(trace.signals[0].date, "2026-08-03");
 });
 
+test("red K plus positive rising MACD and signal lines triggers as bullish continuation", () => {
+  const trace = scanH1Trendline(
+    [
+      candle(0, 10),
+      candle(1, 8),
+      candle(2, 7, { open: 5.5, close: 6.5 }),
+    ],
+    {
+      macd: [0.4, 0.6, 0.9],
+      macdSignal: [0.2, 0.3, 0.5],
+      macdHistogram: [0.2, 0.3, 0.4],
+      dpo: [0, -2, -1],
+    },
+  );
+
+  assert.equal(trace.signals.length, 1);
+  assert.equal(trace.signals[0].closeConfirmation, true);
+  assert.equal(trace.signals[0].breakoutType, "body-cross");
+  assert.equal(trace.signals[0].macdWeakening, false);
+  assert.equal(trace.signals[0].macdPositiveRising, true);
+  assert.equal(trace.signals[0].macdSignalMode, "positive-rising");
+  assert.equal(trace.signals[0].dpoUpturn, true);
+});
+
 test("a red K that opens above the line is classified separately from a body cross", () => {
   const trace = scanH1Trendline(
     [
@@ -410,10 +434,9 @@ test("every snapshot stock follows the same H1-H2 no-look-ahead contract", () =>
         `${stock.symbol}: signal used the current candle as H2`,
       );
       assert.equal(signal.redCandle, true, `${stock.symbol}: signal is not red K`);
-      assert.equal(
-        signal.macdWeakening,
-        true,
-        `${stock.symbol}: MACD is not weakening`,
+      assert.ok(
+        signal.macdWeakening || signal.macdPositiveRising,
+        `${stock.symbol}: MACD matches neither accepted mode`,
       );
       assert.equal(signal.dpoUpturn, true, `${stock.symbol}: DPO is not turning up`);
       assert.equal(signal.highCrossed, true, `${stock.symbol}: high did not cross`);
