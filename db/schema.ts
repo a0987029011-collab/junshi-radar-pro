@@ -2,6 +2,10 @@ import { sql } from "drizzle-orm";
 import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { PositionMarketSnapshot } from "../lib/position-market-snapshot";
 import type {
+  ClosedPositionCase,
+  PositionTransaction,
+} from "../lib/position-transactions";
+import type {
   SignalResearchObservation,
   SignalOutcomeSnapshot,
   TimeframeResearchSnapshot,
@@ -83,6 +87,53 @@ export const watchlistItems = sqliteTable(
   },
   (table) => [
     index("idx_watchlist_items_owner_added").on(table.ownerId, table.addedAt)
+  ]
+);
+
+export const closedPositionCases = sqliteTable(
+  "closed_position_cases",
+  {
+    id: text("id").primaryKey(),
+    caseKey: text("case_key").notNull(),
+    ownerId: text("owner_id").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    openedAt: text("opened_at").notNull(),
+    closedAt: text("closed_at").notNull(),
+    holdingDays: integer("holding_days").notNull(),
+    totalShares: integer("total_shares").notNull(),
+    transactionCount: integer("transaction_count").notNull(),
+    averageEntryPrice: real("average_entry_price").notNull(),
+    averageExitPrice: real("average_exit_price").notNull(),
+    totalCostWithFees: real("total_cost_with_fees").notNull(),
+    netSaleProceeds: real("net_sale_proceeds").notNull(),
+    realizedProfit: real("realized_profit").notNull(),
+    realizedReturnPercent: real("realized_return_percent").notNull(),
+    targetReturnPercent: real("target_return_percent").notNull().default(10),
+    targetReached: integer("target_reached", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    entrySnapshot: text("entry_snapshot", { mode: "json" }).$type<
+      PositionMarketSnapshot | null
+    >(),
+    exitSnapshot: text("exit_snapshot", { mode: "json" }).$type<
+      PositionMarketSnapshot | null
+    >(),
+    transactions: text("transactions", { mode: "json" }).$type<
+      PositionTransaction[]
+    >().notNull(),
+    createdAt: text("created_at").$type<ClosedPositionCase["createdAt"]>().notNull(),
+  },
+  (table) => [
+    index("idx_closed_position_cases_owner_closed").on(
+      table.ownerId,
+      table.closedAt
+    ),
+    index("idx_closed_position_cases_owner_target_closed").on(
+      table.ownerId,
+      table.targetReached,
+      table.closedAt
+    ),
   ]
 );
 

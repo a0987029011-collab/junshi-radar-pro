@@ -1,13 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getPositionMarketSnapshot } from "./position-market-snapshot";
+import { saveLocalClosedPositionCase } from "./closed-position-case-store.local";
 import {
+  buildClosedPositionCase,
   calculateNetSaleProceeds,
   summarizePositionTransactions,
   type PositionBuyInput,
   type PositionSellInput,
   type PositionTransaction
 } from "./position-transactions";
+import { deleteLocalWatchlistItem } from "./watchlist-store.local";
 
 interface LocalPositionTransaction extends PositionTransaction {
   ownerId: string;
@@ -41,7 +44,10 @@ export async function listLocalPositionTransactions(
       (transaction) =>
         transaction.ownerId === ownerId && transaction.symbol === symbol
     )
-    .map(({ ownerId: _ownerId, ...transaction }) => transaction)
+    .map(({ ownerId: storedOwnerId, ...transaction }) => {
+      void storedOwnerId;
+      return transaction;
+    })
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
 }
 
@@ -73,7 +79,10 @@ export async function addLocalPositionSale(
       (transaction) =>
         transaction.ownerId === ownerId && transaction.symbol === input.symbol
     )
-    .map(({ ownerId: _ownerId, ...transaction }) => transaction);
+    .map(({ ownerId: storedOwnerId, ...transaction }) => {
+      void storedOwnerId;
+      return transaction;
+    });
   const summary = summarizePositionTransactions(
     ownerTransactions,
     input.commissionDiscount
@@ -95,7 +104,7 @@ export async function addLocalPositionSale(
       : 0;
 
   const now = new Date().toISOString();
-  transactions.push({
+  const sale: LocalPositionTransaction = {
     id: crypto.randomUUID(),
     ownerId,
     ...input,
@@ -104,9 +113,28 @@ export async function addLocalPositionSale(
     averageEntryPrice: summary.averageEntryPrice,
     realizedReturnPercent,
     createdAt: now
-  });
+  };
+  transactions.push(sale);
   await writeTransactions(transactions);
-  return listLocalPositionTransactions(ownerId, input.symbol);
+  const positionClosed = input.shares === summary.totalShares;
+  const closedCase = positionClosed
+    ? buildClosedPositionCase([
+        ...ownerTransactions,
+        (({ ownerId: storedOwnerId, ...transaction }) => {
+          void storedOwnerId;
+          return transaction;
+        })(sale),
+      ])
+    : null;
+  if (closedCase) {
+    await saveLocalClosedPositionCase(ownerId, closedCase);
+    await deleteLocalWatchlistItem(ownerId, input.symbol);
+  }
+  return {
+    transactions: await listLocalPositionTransactions(ownerId, input.symbol),
+    positionClosed: Boolean(closedCase),
+    closedCase,
+  };
 }
 
 export async function deleteLocalPositionTransactions(

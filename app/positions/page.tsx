@@ -34,6 +34,7 @@ export default async function PositionsPage({
             <li><span className="signal-check">1</span><span>加入追蹤後先進入待登錄，不會假設你已經買進。</span></li>
             <li><span className="signal-check">2</span><span>填入第一批股數與成交價後，才開始計算正式持股。</span></li>
             <li><span className="signal-check">3</span><span>停損會自動跟隨該股最近仍有效的突破防守線。</span></li>
+            <li><span className="signal-check">4</span><span>股數歸零時自動移出持股名單，完整結果保留在研究資料庫。</span></li>
           </ul>
         </article>
       </section>

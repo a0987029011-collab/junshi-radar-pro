@@ -35,6 +35,47 @@ export interface PositionSellInput {
   commissionDiscount: number;
 }
 
+export const SHORT_TERM_TARGET_RETURN_PERCENT = 10;
+
+export interface ClosedPositionCase {
+  caseKey: string;
+  symbol: string;
+  name: string;
+  openedAt: string;
+  closedAt: string;
+  holdingDays: number;
+  totalShares: number;
+  transactionCount: number;
+  averageEntryPrice: number;
+  averageExitPrice: number;
+  totalCostWithFees: number;
+  netSaleProceeds: number;
+  realizedProfit: number;
+  realizedReturnPercent: number;
+  targetReturnPercent: number;
+  targetReached: boolean;
+  entrySnapshot: PositionMarketSnapshot | null;
+  exitSnapshot: PositionMarketSnapshot | null;
+  transactions: PositionTransaction[];
+  createdAt: string;
+}
+
+export interface PositionSaleResult {
+  transactions: PositionTransaction[];
+  positionClosed: boolean;
+  closedCase: ClosedPositionCase | null;
+}
+
+export interface ClosedPositionResearchSummary {
+  totalCases: number;
+  profitableCases: number;
+  targetReachedCases: number;
+  targetHitRatePercent: number | null;
+  averageReturnPercent: number | null;
+  averageHoldingDays: number | null;
+  averageProfit: number | null;
+}
+
 export const DEFAULT_COMMISSION_DISCOUNT = 0.3;
 export const BROKER_COMMISSION_RATE = 0.001425;
 export const MINIMUM_COMMISSION = 20;
@@ -84,6 +125,53 @@ export function calculateNetSaleProceeds(
     calculateBrokerCommission(grossAmount, commissionDiscount) -
     grossAmount * STOCK_TRANSACTION_TAX_RATE
   );
+}
+
+export function roundUpToTaiwanStockTick(price: number) {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  const tick =
+    price < 10
+      ? 0.01
+      : price < 50
+        ? 0.05
+        : price < 100
+          ? 0.1
+          : price < 500
+            ? 0.5
+            : price < 1000
+              ? 1
+              : 5;
+  return Number((Math.ceil((price - 1e-9) / tick) * tick).toFixed(2));
+}
+
+export function calculateTargetSalePrice(
+  shares: number,
+  totalCostWithFees: number,
+  targetReturnPercent = SHORT_TERM_TARGET_RETURN_PERCENT,
+  commissionDiscount = DEFAULT_COMMISSION_DISCOUNT
+) {
+  if (shares <= 0 || totalCostWithFees <= 0) return 0;
+  const targetProceeds =
+    totalCostWithFees * (1 + targetReturnPercent / 100);
+  let low = totalCostWithFees / shares;
+  let high = low * (1 + targetReturnPercent / 100 + 0.1);
+  while (
+    calculateNetSaleProceeds(shares, high, commissionDiscount) < targetProceeds
+  ) {
+    high *= 1.2;
+  }
+  for (let iteration = 0; iteration < 60; iteration += 1) {
+    const middle = (low + high) / 2;
+    if (
+      calculateNetSaleProceeds(shares, middle, commissionDiscount) >=
+      targetProceeds
+    ) {
+      high = middle;
+    } else {
+      low = middle;
+    }
+  }
+  return roundUpToTaiwanStockTick(high);
 }
 
 function normalizeCommon(input: Record<string, unknown>) {
@@ -211,5 +299,149 @@ export function summarizePositionTransactions(
     totalCostWithFees,
     averageEntryPrice: totalShares > 0 ? totalCost / totalShares : 0,
     averageEntryCost: totalShares > 0 ? totalCostWithFees / totalShares : 0
+  };
+}
+
+function latestCompletedCycle(
+  transactions: PositionTransaction[]
+): PositionTransaction[] | null {
+  let openShares = 0;
+  let activeCycle: PositionTransaction[] = [];
+  let completedCycle: PositionTransaction[] | null = null;
+
+  const sorted = [...transactions].sort(
+    (left, right) =>
+      left.occurredAt.localeCompare(right.occurredAt) ||
+      left.createdAt.localeCompare(right.createdAt)
+  );
+  for (const transaction of sorted) {
+    if (transaction.kind === "buy") {
+      if (openShares === 0) activeCycle = [];
+      activeCycle.push(transaction);
+      openShares += transaction.shares;
+      continue;
+    }
+    if (openShares <= 0) continue;
+    activeCycle.push(transaction);
+    openShares = Math.max(0, openShares - transaction.shares);
+    if (openShares === 0) {
+      completedCycle = [...activeCycle];
+      activeCycle = [];
+    }
+  }
+
+  return completedCycle;
+}
+
+export function buildClosedPositionCase(
+  transactions: PositionTransaction[],
+  targetReturnPercent = SHORT_TERM_TARGET_RETURN_PERCENT
+): ClosedPositionCase | null {
+  const cycle = latestCompletedCycle(transactions);
+  if (!cycle?.length || cycle.at(-1)?.kind !== "sell") return null;
+  const buys = cycle.filter((transaction) => transaction.kind === "buy");
+  const sales = cycle.filter((transaction) => transaction.kind === "sell");
+  if (!buys.length || !sales.length) return null;
+  const totalShares = buys.reduce(
+    (total, transaction) => total + transaction.shares,
+    0
+  );
+  const totalSoldShares = sales.reduce(
+    (total, transaction) => total + transaction.shares,
+    0
+  );
+  if (totalShares <= 0 || totalSoldShares !== totalShares) return null;
+  const totalBuyValue = buys.reduce(
+    (total, transaction) => total + transaction.shares * transaction.price,
+    0
+  );
+  const totalCostWithFees = buys.reduce((total, transaction) => {
+    const grossAmount = transaction.shares * transaction.price;
+    return (
+      total +
+      grossAmount +
+      calculateBrokerCommission(
+        grossAmount,
+        transaction.commissionDiscount ?? DEFAULT_COMMISSION_DISCOUNT
+      )
+    );
+  }, 0);
+  const totalSaleValue = sales.reduce(
+    (total, transaction) => total + transaction.shares * transaction.price,
+    0
+  );
+  const netSaleProceeds = sales.reduce(
+    (total, transaction) =>
+      total +
+      calculateNetSaleProceeds(
+        transaction.shares,
+        transaction.price,
+        transaction.commissionDiscount ?? DEFAULT_COMMISSION_DISCOUNT
+      ),
+    0
+  );
+  const realizedProfit = netSaleProceeds - totalCostWithFees;
+  const realizedReturnPercent =
+    totalCostWithFees > 0
+      ? (realizedProfit / totalCostWithFees) * 100
+      : 0;
+  const openedAt = buys[0].occurredAt;
+  const closedAt = sales.at(-1)!.occurredAt;
+  const holdingDays = Math.max(
+    0,
+    Math.ceil((Date.parse(closedAt) - Date.parse(openedAt)) / 86_400_000)
+  );
+
+  return {
+    caseKey: `${cycle.at(-1)!.id}:${closedAt}`,
+    symbol: buys[0].symbol,
+    name: buys[0].name,
+    openedAt,
+    closedAt,
+    holdingDays,
+    totalShares,
+    transactionCount: cycle.length,
+    averageEntryPrice: totalBuyValue / totalShares,
+    averageExitPrice: totalSaleValue / totalSoldShares,
+    totalCostWithFees,
+    netSaleProceeds,
+    realizedProfit,
+    realizedReturnPercent,
+    targetReturnPercent,
+    targetReached: realizedReturnPercent >= targetReturnPercent,
+    entrySnapshot: buys[0].marketSnapshot ?? null,
+    exitSnapshot: sales.at(-1)?.marketSnapshot ?? null,
+    transactions: cycle,
+    createdAt: new Date().toISOString()
+  };
+}
+
+export function summarizeClosedPositionCases(
+  cases: ClosedPositionCase[]
+): ClosedPositionResearchSummary {
+  if (!cases.length) {
+    return {
+      totalCases: 0,
+      profitableCases: 0,
+      targetReachedCases: 0,
+      targetHitRatePercent: null,
+      averageReturnPercent: null,
+      averageHoldingDays: null,
+      averageProfit: null,
+    };
+  }
+  const total = (values: number[]) =>
+    values.reduce((sum, value) => sum + value, 0);
+  const targetReachedCases = cases.filter((item) => item.targetReached).length;
+  return {
+    totalCases: cases.length,
+    profitableCases: cases.filter((item) => item.realizedProfit > 0).length,
+    targetReachedCases,
+    targetHitRatePercent: (targetReachedCases / cases.length) * 100,
+    averageReturnPercent:
+      total(cases.map((item) => item.realizedReturnPercent)) / cases.length,
+    averageHoldingDays:
+      total(cases.map((item) => item.holdingDays)) / cases.length,
+    averageProfit: total(cases.map((item) => item.realizedProfit)) / cases.length,
   };
 }

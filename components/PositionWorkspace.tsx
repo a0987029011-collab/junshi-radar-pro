@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { WatchlistPositionItem } from "../lib/watchlist";
+import type { ClosedPositionCase } from "../lib/position-transactions";
 import { CandleChart } from "./CandleChart";
 import { PositionManager } from "./PositionManager";
 
@@ -28,15 +29,12 @@ export function PositionWorkspace({
         };
         if (!response.ok) throw new Error(body.error ?? "追蹤清單讀取失敗");
         if (cancelled) return;
-        const merged = [...(body.items ?? []), initialItem].filter(
-          (item, index, all) =>
-            all.findIndex((candidate) => candidate.symbol === item.symbol) === index
-        );
-        setItems(merged);
+        const nextItems = body.items ?? [];
+        setItems(nextItems);
         setSelectedSymbol((current) =>
-          merged.some((item) => item.symbol === current)
+          nextItems.some((item) => item.symbol === current)
             ? current
-            : initialItem.symbol
+            : nextItems[0]?.symbol ?? ""
         );
         setFeedback("");
       })
@@ -51,18 +49,33 @@ export function PositionWorkspace({
     };
   }, [initialItem]);
 
-  const selected =
-    items.find((item) => item.symbol === selectedSymbol) ?? initialItem;
+  const selected = items.find((item) => item.symbol === selectedSymbol) ?? null;
 
-  function removeItem(symbol: string) {
+  function removeItem(symbol: string, feedbackMessage?: string) {
     const remaining = items.filter((item) => item.symbol !== symbol);
     setItems(remaining);
     if (remaining.length === 0) {
-      window.location.assign("/");
+      setSelectedSymbol("");
+      setFeedback(
+        feedbackMessage ?? "已刪除誤選的持股與全部交易紀錄。"
+      );
       return;
     }
     setSelectedSymbol(remaining[0].symbol);
-    setFeedback("已刪除誤選的持股與全部交易紀錄。");
+    setFeedback(
+      feedbackMessage ?? "已刪除誤選的持股與全部交易紀錄。"
+    );
+  }
+
+  function closeItem(symbol: string, closedCase: ClosedPositionCase) {
+    removeItem(
+      symbol,
+      `${closedCase.name} 已全部賣出並歸檔；實際淨損益 ${
+        closedCase.realizedReturnPercent >= 0 ? "+" : ""
+      }${closedCase.realizedReturnPercent.toFixed(2)}%，${
+        closedCase.targetReached ? "已達成短期 +10% 目標" : "未達短期 +10% 目標"
+      }。`
+    );
   }
 
   return (
@@ -75,8 +88,8 @@ export function PositionWorkspace({
         <div aria-label="追蹤股票" className="position-symbol-tabs" role="tablist">
           {items.map((item) => (
             <button
-              aria-selected={selected.symbol === item.symbol}
-              className={selected.symbol === item.symbol ? "active" : ""}
+              aria-selected={selected?.symbol === item.symbol}
+              className={selected?.symbol === item.symbol ? "active" : ""}
               key={item.symbol}
               onClick={() => setSelectedSymbol(item.symbol)}
               role="tab"
@@ -89,26 +102,36 @@ export function PositionWorkspace({
         {feedback ? <small>{feedback}</small> : null}
       </section>
 
-      <PositionManager
-        classification={selected.classification}
-        currentPrice={selected.currentPrice}
-        key={selected.symbol}
-        name={selected.name}
-        onDelete={removeItem}
-        stopPrice={selected.stopPrice}
-        stopSourceDate={selected.stopSourceDate}
-        symbol={selected.symbol}
-      />
+      {selected ? (
+        <>
+          <PositionManager
+            classification={selected.classification}
+            currentPrice={selected.currentPrice}
+            key={selected.symbol}
+            name={selected.name}
+            onClosed={closeItem}
+            onDelete={removeItem}
+            stopPrice={selected.stopPrice}
+            stopSourceDate={selected.stopSourceDate}
+            symbol={selected.symbol}
+          />
 
-      <section className="position-market-observation">
-        <div className="panel position-market-heading">
-          <div>
-            <strong>持股盤面觀察</strong>
-            <span>{selected.name} {selected.symbol}｜直接查看日、週、月 K 與目前防守線</span>
-          </div>
-        </div>
-        <CandleChart key={selected.symbol} symbol={selected.symbol} />
-      </section>
+          <section className="position-market-observation">
+            <div className="panel position-market-heading">
+              <div>
+                <strong>持股盤面觀察</strong>
+                <span>{selected.name} {selected.symbol}｜直接查看日、週、月 K 與目前防守線</span>
+              </div>
+            </div>
+            <CandleChart key={selected.symbol} symbol={selected.symbol} />
+          </section>
+        </>
+      ) : (
+        <section className="panel info-card">
+          <h2>目前沒有持股或追蹤股票</h2>
+          <p>全部賣完的股票會自動從這裡移除，交易結果仍保留在研究資料庫。</p>
+        </section>
+      )}
     </>
   );
 }

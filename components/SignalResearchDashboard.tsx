@@ -127,7 +127,7 @@ export default function SignalResearchDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadResearch();
+    const initialLoad = window.setTimeout(() => void loadResearch(), 0);
     const handleSync = (event: Event) => {
       const detail = (event as CustomEvent<{
         completed?: boolean;
@@ -152,8 +152,10 @@ export default function SignalResearchDashboard() {
       }
     };
     window.addEventListener(SIGNAL_RESEARCH_SYNC_EVENT, handleSync);
-    return () =>
+    return () => {
+      window.clearTimeout(initialLoad);
       window.removeEventListener(SIGNAL_RESEARCH_SYNC_EVENT, handleSync);
+    };
   }, [loadResearch]);
 
   if (loading) {

@@ -3,6 +3,7 @@ import {
   normalizePositionSellInput,
   type PositionBuyInput,
   type PositionSellInput,
+  type PositionSaleResult,
   type PositionTransaction
 } from "../../../lib/position-transactions";
 
@@ -18,7 +19,7 @@ type PositionStore = {
   addSale(
     ownerId: string,
     input: PositionSellInput
-  ): Promise<PositionTransaction[]>;
+  ): Promise<PositionSaleResult>;
   remove(ownerId: string, symbol: string): Promise<number>;
 };
 
@@ -81,15 +82,21 @@ export async function POST(request: Request) {
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
     const body = (await request.json()) as Record<string, unknown>;
     const store = await getStore(request);
-    let transactions: PositionTransaction[];
     if (body.action === "buy") {
-      transactions = await store.addBuy(ownerId, normalizePositionBuyInput(body));
+      const transactions = await store.addBuy(
+        ownerId,
+        normalizePositionBuyInput(body),
+      );
+      return Response.json({ transactions, positionClosed: false });
     } else if (body.action === "sell") {
-      transactions = await store.addSale(ownerId, normalizePositionSellInput(body));
+      const result = await store.addSale(
+        ownerId,
+        normalizePositionSellInput(body),
+      );
+      return Response.json(result);
     } else {
       throw new Error("不支援的持股操作");
     }
-    return Response.json({ transactions });
   } catch (error) {
     return errorResponse(error);
   }

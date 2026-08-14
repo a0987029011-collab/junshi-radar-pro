@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   calculateNetSaleProceeds,
+  calculateTargetSalePrice,
   DEFAULT_COMMISSION_DISCOUNT,
+  SHORT_TERM_TARGET_RETURN_PERCENT,
   summarizePositionTransactions,
+  type ClosedPositionCase,
   type PositionTransaction
 } from "../lib/position-transactions";
 import type { Classification } from "../lib/types";
@@ -49,7 +52,8 @@ export function PositionManager({
   stopPrice,
   stopSourceDate,
   classification,
-  onDelete
+  onDelete,
+  onClosed
 }: {
   symbol: string;
   name: string;
@@ -58,6 +62,7 @@ export function PositionManager({
   stopSourceDate: string;
   classification: Classification;
   onDelete: (symbol: string) => void;
+  onClosed: (symbol: string, closedCase: ClosedPositionCase) => void;
 }) {
   const [transactions, setTransactions] = useState<PositionTransaction[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -144,17 +149,23 @@ export function PositionManager({
     });
     const data = (await response.json()) as {
       transactions?: PositionTransaction[];
+      positionClosed?: boolean;
+      closedCase?: ClosedPositionCase | null;
       error?: string;
     };
     if (!response.ok) throw new Error(data.error ?? "持股紀錄儲存失敗");
-    return data.transactions ?? [];
+    return {
+      transactions: data.transactions ?? [],
+      positionClosed: Boolean(data.positionClosed),
+      closedCase: data.closedCase ?? null
+    };
   }
 
   async function addLot() {
     setBusy(true);
     setFeedback("");
     try {
-      const next = await postPosition({
+      const result = await postPosition({
         action: "buy",
         symbol,
         name,
@@ -163,6 +174,7 @@ export function PositionManager({
         commissionDiscount,
         occurredAt: `${purchaseDate}T12:00:00+08:00`
       });
+      const next = result.transactions;
       setTransactions(next);
       setSellShares(
         String(
@@ -183,7 +195,7 @@ export function PositionManager({
     setBusy(true);
     setFeedback("");
     try {
-      const next = await postPosition({
+      const result = await postPosition({
         action: "sell",
         symbol,
         name,
@@ -192,7 +204,12 @@ export function PositionManager({
         commissionDiscount,
         occurredAt: new Date().toISOString()
       });
+      const next = result.transactions;
       setTransactions(next);
+      if (result.positionClosed && result.closedCase) {
+        onClosed(symbol, result.closedCase);
+        return;
+      }
       const remainingShares = summarizePositionTransactions(
         next,
         commissionDiscount
@@ -255,6 +272,12 @@ export function PositionManager({
   }
 
   const hasOpenPosition = summary.totalShares > 0;
+  const targetSalePrice = calculateTargetSalePrice(
+    summary.totalShares,
+    summary.totalCostWithFees,
+    SHORT_TERM_TARGET_RETURN_PERCENT,
+    commissionDiscount
+  );
 
   function updateCommissionDiscount(value: number) {
     setCommissionDiscount(value);
@@ -284,6 +307,7 @@ export function PositionManager({
         <div><span>平均進場價</span><strong>{summary.averageEntryPrice > 0 ? formatPrice(summary.averageEntryPrice) : "—"}</strong></div>
         <div><span>目前價格</span><strong>{formatPrice(currentPrice)}</strong></div>
         <div><span>自動停損價</span><strong>{stopPrice === null ? "—" : formatPrice(stopPrice)}</strong></div>
+        <div><span>短期淨利 +10% 目標價</span><strong>{targetSalePrice > 0 ? formatPrice(targetSalePrice) : "—"}</strong></div>
         <div className="position-total-cost"><span>持股總成本（含手續費）</span><strong>{summary.totalShares > 0 ? `$${formatPrice(summary.totalCostWithFees)}` : "—"}</strong></div>
       </div>
       <div className="position-stop-note">
@@ -383,7 +407,7 @@ export function PositionManager({
       {!loaded ? <div className="position-feedback">正在讀取持股歷史…</div> : null}
       {feedback ? <div className="position-feedback" role="status">{feedback}</div> : null}
       <div className="notice">
-        買進與賣出成交會保存為歷史資料，供後續檢查分批進場、停損與實際報酬。
+        短期目標固定為扣除買賣費稅後淨利 +10%。全部賣完時會自動移出持股名單，並把完整交易結案保存到研究資料庫。
       </div>
       {loaded && transactions.length > 0 ? (
         <button

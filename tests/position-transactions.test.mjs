@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildClosedPositionCase,
+  calculateNetSaleProceeds,
+  calculateTargetSalePrice,
   normalizePositionBuyInput,
   normalizePositionSellInput,
+  roundUpToTaiwanStockTick,
+  summarizeClosedPositionCases,
   summarizePositionTransactions,
 } from "../lib/position-transactions.ts";
 
@@ -107,4 +112,71 @@ test("transaction inputs default the broker commission to 30 percent", () => {
 
   assert.equal(buy.commissionDiscount, 0.3);
   assert.equal(sale.commissionDiscount, 0.3);
+});
+
+test("the +10 percent target price includes fees, tax, and a valid stock tick", () => {
+  const summary = summarizePositionTransactions([
+    transaction("a", "buy", 100, 80, "2026-08-01T00:00:00.000Z"),
+    transaction("b", "buy", 100, 90, "2026-08-02T00:00:00.000Z"),
+  ]);
+  const targetPrice = calculateTargetSalePrice(
+    summary.totalShares,
+    summary.totalCostWithFees,
+  );
+  const targetProceeds = summary.totalCostWithFees * 1.1;
+
+  assert.equal(targetPrice, roundUpToTaiwanStockTick(targetPrice));
+  assert.ok(
+    calculateNetSaleProceeds(summary.totalShares, targetPrice) >= targetProceeds,
+  );
+  assert.ok(
+    calculateNetSaleProceeds(summary.totalShares, targetPrice - 0.1) <
+      targetProceeds,
+  );
+});
+
+test("a partial sale is not archived until all shares are sold", () => {
+  const partial = [
+    transaction("a", "buy", 100, 80, "2026-08-01T00:00:00.000Z"),
+    transaction("b", "buy", 100, 90, "2026-08-02T00:00:00.000Z"),
+    transaction("c", "sell", 50, 105, "2026-08-03T00:00:00.000Z"),
+  ];
+
+  assert.equal(buildClosedPositionCase(partial), null);
+});
+
+test("a full sale creates a net-return research case with both entry and exit", () => {
+  const closedCase = buildClosedPositionCase([
+    transaction("a", "buy", 100, 80, "2026-08-01T00:00:00.000Z"),
+    transaction("b", "buy", 100, 90, "2026-08-02T00:00:00.000Z"),
+    transaction("c", "sell", 50, 105, "2026-08-03T00:00:00.000Z"),
+    transaction("d", "sell", 150, 105, "2026-08-05T00:00:00.000Z"),
+  ]);
+
+  assert.ok(closedCase);
+  assert.equal(closedCase.totalShares, 200);
+  assert.equal(closedCase.transactionCount, 4);
+  assert.equal(closedCase.averageEntryPrice, 85);
+  assert.equal(closedCase.averageExitPrice, 105);
+  assert.equal(closedCase.holdingDays, 4);
+  assert.ok(closedCase.realizedReturnPercent > 22);
+  assert.equal(closedCase.targetReached, true);
+});
+
+test("closed-position summary keeps wins and misses in the same dataset", () => {
+  const winner = buildClosedPositionCase([
+    transaction("a", "buy", 100, 80, "2026-08-01T00:00:00.000Z"),
+    transaction("b", "sell", 100, 100, "2026-08-05T00:00:00.000Z"),
+  ]);
+  const miss = buildClosedPositionCase([
+    transaction("c", "buy", 100, 100, "2026-08-06T00:00:00.000Z"),
+    transaction("d", "sell", 100, 95, "2026-08-10T00:00:00.000Z"),
+  ]);
+  assert.ok(winner && miss);
+
+  const summary = summarizeClosedPositionCases([winner, miss]);
+  assert.equal(summary.totalCases, 2);
+  assert.equal(summary.profitableCases, 1);
+  assert.equal(summary.targetReachedCases, 1);
+  assert.equal(summary.targetHitRatePercent, 50);
 });

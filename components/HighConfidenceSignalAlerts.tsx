@@ -42,14 +42,16 @@ export function HighConfidenceSignalAlerts() {
   }, []);
 
   useEffect(() => {
-    void loadReview();
+    const initialLoad = window.setTimeout(() => void loadReview(), 0);
     const handleSync = (event: Event) => {
       const detail = (event as CustomEvent<{ completed?: boolean }>).detail;
       if (detail.completed) void loadReview();
     };
     window.addEventListener(SIGNAL_RESEARCH_SYNC_EVENT, handleSync);
-    return () =>
+    return () => {
+      window.clearTimeout(initialLoad);
       window.removeEventListener(SIGNAL_RESEARCH_SYNC_EVENT, handleSync);
+    };
   }, [loadReview]);
 
   return (
