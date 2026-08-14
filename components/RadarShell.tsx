@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { AutoReloadOnDataChange } from "./AutoReloadOnDataChange";
 import { APP_RELEASE_DATE, APP_VERSION } from "../lib/app-version";
 import { marketSnapshotMeta } from "../lib/market-data";
+import { SignalResearchSync } from "./SignalResearchSync";
 
 const nav = [
   { href: "/", icon: "⌁", label: "雷達" },
@@ -23,6 +24,7 @@ export function RadarShell({
     marketSnapshotMeta.mode.includes("intraday");
   return (
     <div className="app-shell">
+      <SignalResearchSync />
       <AutoReloadOnDataChange
         initialSnapshotGeneratedAt={marketSnapshotMeta.generatedAt}
       />

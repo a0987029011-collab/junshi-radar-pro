@@ -1,6 +1,11 @@
 import { sql } from "drizzle-orm";
 import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { PositionMarketSnapshot } from "../lib/position-market-snapshot";
+import type {
+  SignalResearchObservation,
+  SignalOutcomeSnapshot,
+  TimeframeResearchSnapshot,
+} from "../lib/signal-research";
 
 export const trendlineCorrections = sqliteTable(
   "trendline_corrections",
@@ -79,4 +84,67 @@ export const watchlistItems = sqliteTable(
   (table) => [
     index("idx_watchlist_items_owner_added").on(table.ownerId, table.addedAt)
   ]
+);
+
+export const signalObservations = sqliteTable(
+  "signal_observations",
+  {
+    id: text("id").primaryKey(),
+    observationKey: text("observation_key").notNull(),
+    ownerId: text("owner_id").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    market: text("market").notNull(),
+    sector: text("sector").notNull(),
+    signalDate: text("signal_date").notNull(),
+    signalName: text("signal_name").notNull(),
+    signalKind: text("signal_kind").notNull(),
+    breakoutType: text("breakout_type"),
+    macdSignalMode: text("macd_signal_mode"),
+    entryPrice: real("entry_price").notNull(),
+    linePrice: real("line_price").notNull(),
+    snapshot: text("snapshot", { mode: "json" }).$type<{
+      month: TimeframeResearchSnapshot | null;
+      week: TimeframeResearchSnapshot | null;
+      day: TimeframeResearchSnapshot | null;
+    }>().notNull(),
+    outcomes: text("outcomes", { mode: "json" }).$type<
+      Record<5 | 20 | 60, SignalOutcomeSnapshot>
+    >().notNull(),
+    status: text("status").$type<SignalResearchObservation["status"]>().notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_signal_observations_owner_date").on(
+      table.ownerId,
+      table.signalDate,
+    ),
+    index("idx_signal_observations_owner_status_date").on(
+      table.ownerId,
+      table.status,
+      table.signalDate,
+    ),
+  ],
+);
+
+export const signalResearchSyncs = sqliteTable(
+  "signal_research_syncs",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    snapshotGeneratedAt: text("snapshot_generated_at").notNull(),
+    nextProfileIndex: integer("next_profile_index").notNull().default(0),
+    completed: integer("completed", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    observationCount: integer("observation_count").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_signal_research_syncs_owner_snapshot").on(
+      table.ownerId,
+      table.snapshotGeneratedAt,
+    ),
+  ],
 );

@@ -43,6 +43,13 @@
       "when": 1786541865638,
       "tag": "0005_petite_piledriver",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786678421115,
+      "tag": "0006_flashy_grim_reaper",
+      "breakpoints": true
     }
   ]
 }
