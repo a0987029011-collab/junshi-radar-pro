@@ -12,6 +12,7 @@ import {
   type ScanResultItem
 } from '../lib/scanEngine';
 import { importedStocks } from '../lib/stockData';
+import { HighConfidenceSignalAlerts } from './HighConfidenceSignalAlerts';
 
 const marketFilterOptions = ['全部', '上市', '上櫃'] as const;
 
@@ -288,6 +289,8 @@ export default function ScannerDashboard() {
           </div>
         ) : null}
       </header>
+
+      <HighConfidenceSignalAlerts />
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/20">
         <div className="mb-6">

@@ -4,6 +4,7 @@ import {
 } from "../../../lib/market-data";
 import {
   buildSignalResearchObservations,
+  deriveHighConfidenceSignalReview,
   selectSuccessfulSignalCases,
   summarizeSignalResearch,
   type SignalResearchObservation,
@@ -41,6 +42,10 @@ function responsePayload(observations: SignalResearchObservation[]) {
     dataAsOf: marketSnapshotMeta.dataAsOf,
     generatedAt: marketSnapshotMeta.generatedAt,
     summary: summarizeSignalResearch(observations),
+    highConfidenceReview: deriveHighConfidenceSignalReview(
+      observations,
+      marketSnapshotMeta.dataAsOf,
+    ),
     successfulCases: selectSuccessfulSignalCases(observations),
     recentCases,
   };

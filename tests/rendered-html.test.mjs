@@ -66,7 +66,7 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.6\.0/);
+  assert.match(html, /版本 0\.7\.0/);
   assert.match(html, /更新時間/);
   assert.match(html, new RegExp(marketSnapshotMeta.dataAsOf));
   assert.doesNotMatch(html, /重新計算/);

@@ -128,6 +128,55 @@ export interface SignalResearchSummary {
   }>;
 }
 
+export const HIGH_CONFIDENCE_THRESHOLDS = {
+  minimumSamples: 80,
+  minimumUniqueStocks: 40,
+  minimumUniqueDates: 20,
+  minimumHitRatePercent: 70,
+  minimumWilsonLowerBoundPercent: 65,
+  minimumRecentSamples: 30,
+  minimumRecentHitRatePercent: 60,
+  minimumLiftPercent: 10,
+  minimumAverageCloseReturnPercent: 5,
+  minimumAverageAdversePercent: -10,
+} as const;
+
+export interface HighConfidenceSignalCandidate {
+  observationKey: string;
+  symbol: string;
+  name: string;
+  market: string;
+  sector: string;
+  signalDate: string;
+  entryPrice: number;
+  signalKind: SignalResearchObservation["signalKind"];
+  breakoutType: SignalResearchObservation["breakoutType"];
+  macdSignalMode: SignalResearchObservation["macdSignalMode"];
+  logicLabels: string[];
+  evidence: {
+    samples: number;
+    uniqueStocks: number;
+    uniqueSignalDates: number;
+    hitRatePercent: number;
+    wilsonLowerBoundPercent: number;
+    recentSamples: number;
+    recentHitRatePercent: number;
+    baselineHitRatePercent: number;
+    liftPercent: number;
+    averageCloseReturnPercent: number;
+    averageMaxReturnPercent: number;
+    averageAdversePercent: number;
+  };
+}
+
+export interface HighConfidenceSignalReview {
+  dataAsOf: string;
+  evaluatedSignals: number;
+  qualifiedSignals: number;
+  candidates: HighConfidenceSignalCandidate[];
+  thresholds: typeof HIGH_CONFIDENCE_THRESHOLDS;
+}
+
 const MOVING_AVERAGE_PERIODS = [5, 10, 20, 35, 60] as const;
 
 function average(values: number[]) {
@@ -379,6 +428,211 @@ export function buildSignalResearchObservations(
 
 function roundedAverage(values: number[]) {
   return values.length ? average(values) : null;
+}
+
+function ma35Position(snapshot: TimeframeResearchSnapshot | null) {
+  if (!snapshot) return "unknown";
+  const ma35 = snapshot.movingAverages.find((item) => item.period === 35);
+  if (ma35?.value === null || ma35?.value === undefined) return "unknown";
+  return snapshot.close >= ma35.value ? "above" : "below";
+}
+
+function timeframeRegime(snapshot: TimeframeResearchSnapshot | null) {
+  if (!snapshot) return "unknown";
+  return `${snapshot.dpo.direction}-${ma35Position(snapshot)}`;
+}
+
+function highConfidenceSignature(observation: SignalResearchObservation) {
+  return [
+    observation.macdSignalMode ?? "unknown",
+    observation.breakoutType ?? "intraday-only",
+    timeframeRegime(observation.snapshot.week),
+    timeframeRegime(observation.snapshot.month),
+  ].join("|");
+}
+
+function directionLabel(value: Direction) {
+  return value === "rising" ? "DPO 上彎" : value === "falling" ? "DPO 下彎" : "DPO 走平";
+}
+
+function timeframeLogicLabel(
+  label: "月" | "週",
+  snapshot: TimeframeResearchSnapshot | null,
+) {
+  if (!snapshot) return `${label}線資料不足`;
+  const position = ma35Position(snapshot);
+  return `${label}${directionLabel(snapshot.dpo.direction)}、${
+    position === "above"
+      ? "站上 MA35"
+      : position === "below"
+        ? "位於 MA35 下"
+        : "MA35 資料不足"
+  }`;
+}
+
+function highConfidenceLogicLabels(observation: SignalResearchObservation) {
+  const macd =
+    observation.macdSignalMode === "positive-rising"
+      ? "MACD 零軸上雙線向上"
+      : observation.macdSignalMode === "negative-weakening"
+        ? "MACD 負柱縮短"
+        : "MACD 其他型態";
+  const breakout =
+    observation.breakoutType === "body-cross"
+      ? "紅 K 實體穿越"
+      : observation.breakoutType === "gap-above"
+        ? "跳空紅 K 站上"
+        : "盤中穿越預警";
+  return [
+    macd,
+    breakout,
+    timeframeLogicLabel("週", observation.snapshot.week),
+    timeframeLogicLabel("月", observation.snapshot.month),
+  ];
+}
+
+function hitRatePercent(observations: SignalResearchObservation[]) {
+  if (!observations.length) return 0;
+  return (
+    (observations.filter((item) => item.outcomes[20].targetReached).length /
+      observations.length) *
+    100
+  );
+}
+
+function wilsonLowerBoundPercent(successes: number, samples: number) {
+  if (samples <= 0) return 0;
+  const z = 1.96;
+  const probability = successes / samples;
+  const denominator = 1 + (z * z) / samples;
+  const center = probability + (z * z) / (2 * samples);
+  const margin =
+    z *
+    Math.sqrt(
+      (probability * (1 - probability) + (z * z) / (4 * samples)) /
+        samples,
+    );
+  return ((center - margin) / denominator) * 100;
+}
+
+function averageOutcome(
+  observations: SignalResearchObservation[],
+  field: "closeReturnPercent" | "maxReturnPercent" | "maxDrawdownPercent",
+) {
+  const values = observations.flatMap((observation) => {
+    const value = observation.outcomes[20][field];
+    return value === null ? [] : [value];
+  });
+  return values.length ? average(values) : 0;
+}
+
+export function deriveHighConfidenceSignalReview(
+  observations: SignalResearchObservation[],
+  dataAsOf: string,
+): HighConfidenceSignalReview {
+  const currentSignals = observations.filter(
+    (observation) => observation.signalDate === dataAsOf,
+  );
+  const historical = observations
+    .filter(
+      (observation) =>
+        observation.signalDate < dataAsOf && observation.outcomes[20].complete,
+    )
+    .sort(
+      (left, right) =>
+        left.signalDate.localeCompare(right.signalDate) ||
+        left.observationKey.localeCompare(right.observationKey),
+    );
+  const baselineHitRatePercent = hitRatePercent(historical);
+
+  const candidates = currentSignals.flatMap(
+    (current): HighConfidenceSignalCandidate[] => {
+      const signature = highConfidenceSignature(current);
+      const matching = historical.filter(
+        (observation) => highConfidenceSignature(observation) === signature,
+      );
+      const splitIndex = Math.max(1, Math.floor(matching.length * 0.7));
+      const recent = matching.slice(splitIndex);
+      const hits = matching.filter(
+        (observation) => observation.outcomes[20].targetReached,
+      ).length;
+      const hitRate = hitRatePercent(matching);
+      const recentHitRate = hitRatePercent(recent);
+      const wilsonLowerBound = wilsonLowerBoundPercent(hits, matching.length);
+      const lift = hitRate - baselineHitRatePercent;
+      const averageCloseReturn = averageOutcome(
+        matching,
+        "closeReturnPercent",
+      );
+      const averageMaxReturn = averageOutcome(matching, "maxReturnPercent");
+      const averageAdverse = averageOutcome(matching, "maxDrawdownPercent");
+      const uniqueStocks = new Set(matching.map((item) => item.symbol)).size;
+      const uniqueSignalDates = new Set(
+        matching.map((item) => item.signalDate),
+      ).size;
+      const passes =
+        matching.length >= HIGH_CONFIDENCE_THRESHOLDS.minimumSamples &&
+        uniqueStocks >= HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueStocks &&
+        uniqueSignalDates >= HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueDates &&
+        hitRate >= HIGH_CONFIDENCE_THRESHOLDS.minimumHitRatePercent &&
+        wilsonLowerBound >=
+          HIGH_CONFIDENCE_THRESHOLDS.minimumWilsonLowerBoundPercent &&
+        recent.length >= HIGH_CONFIDENCE_THRESHOLDS.minimumRecentSamples &&
+        recentHitRate >=
+          HIGH_CONFIDENCE_THRESHOLDS.minimumRecentHitRatePercent &&
+        lift >= HIGH_CONFIDENCE_THRESHOLDS.minimumLiftPercent &&
+        averageCloseReturn >=
+          HIGH_CONFIDENCE_THRESHOLDS.minimumAverageCloseReturnPercent &&
+        averageAdverse >=
+          HIGH_CONFIDENCE_THRESHOLDS.minimumAverageAdversePercent;
+
+      if (!passes) return [];
+      return [
+        {
+          observationKey: current.observationKey,
+          symbol: current.symbol,
+          name: current.name,
+          market: current.market,
+          sector: current.sector,
+          signalDate: current.signalDate,
+          entryPrice: current.entryPrice,
+          signalKind: current.signalKind,
+          breakoutType: current.breakoutType,
+          macdSignalMode: current.macdSignalMode,
+          logicLabels: highConfidenceLogicLabels(current),
+          evidence: {
+            samples: matching.length,
+            uniqueStocks,
+            uniqueSignalDates,
+            hitRatePercent: hitRate,
+            wilsonLowerBoundPercent: wilsonLowerBound,
+            recentSamples: recent.length,
+            recentHitRatePercent: recentHitRate,
+            baselineHitRatePercent,
+            liftPercent: lift,
+            averageCloseReturnPercent: averageCloseReturn,
+            averageMaxReturnPercent: averageMaxReturn,
+            averageAdversePercent: averageAdverse,
+          },
+        },
+      ];
+    },
+  );
+
+  return {
+    dataAsOf,
+    evaluatedSignals: currentSignals.length,
+    qualifiedSignals: candidates.length,
+    candidates: candidates.sort(
+      (left, right) =>
+        right.evidence.recentHitRatePercent -
+          left.evidence.recentHitRatePercent ||
+        right.evidence.wilsonLowerBoundPercent -
+          left.evidence.wilsonLowerBoundPercent ||
+        left.symbol.localeCompare(right.symbol),
+    ),
+    thresholds: HIGH_CONFIDENCE_THRESHOLDS,
+  };
 }
 
 export function summarizeSignalResearch(
