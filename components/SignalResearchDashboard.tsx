@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { readJsonResponse } from "../lib/read-json-response";
 import type {
   SignalResearchObservation,
   SignalResearchSummary,
@@ -115,7 +116,10 @@ export default function SignalResearchDashboard() {
   const loadResearch = useCallback(async () => {
     try {
       const response = await fetch("/api/signal-research", { cache: "no-store" });
-      const next = (await response.json()) as ResearchPayload;
+      const next = await readJsonResponse<ResearchPayload>(
+        response,
+        "研究資料服務暫時無法讀取",
+      );
       if (!response.ok) throw new Error(next.error ?? "研究資料讀取失敗");
       setPayload(next);
       setError("");

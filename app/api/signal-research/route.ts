@@ -1,20 +1,13 @@
-import {
-  getScannableSnapshotProfiles,
-  marketSnapshotMeta,
-} from "../../../lib/market-data";
-import {
-  buildSignalResearchObservations,
-  deriveHighConfidenceSignalReview,
-  selectSuccessfulSignalCases,
-  summarizeSignalResearch,
-  type SignalResearchObservation,
-} from "../../../lib/signal-research";
+import precomputedPayloadJson from "../../../data/signal-research-payload.json" with {
+  type: "json",
+};
+import type { SignalResearchPayload } from "../../../lib/signal-research-payload";
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
 const LOCAL_OWNER_ID = "local-dev";
 const PROFILE_CHUNK_SIZE = 20;
 
-let localObservationCache: SignalResearchObservation[] | null = null;
+const precomputedPayload = precomputedPayloadJson as SignalResearchPayload;
 
 function isLocalDevelopment(url: URL) {
   return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -24,31 +17,6 @@ function getOwnerId(request: Request) {
   const userId = request.headers.get(USER_ID_HEADER)?.trim();
   if (userId) return userId;
   return isLocalDevelopment(new URL(request.url)) ? LOCAL_OWNER_ID : null;
-}
-
-function localObservations() {
-  localObservationCache ??= buildSignalResearchObservations(
-    getScannableSnapshotProfiles(),
-  );
-  return localObservationCache;
-}
-
-function responsePayload(observations: SignalResearchObservation[]) {
-  const recentCases = observations
-    .slice()
-    .sort((left, right) => right.signalDate.localeCompare(left.signalDate))
-    .slice(0, 20);
-  return {
-    dataAsOf: marketSnapshotMeta.dataAsOf,
-    generatedAt: marketSnapshotMeta.generatedAt,
-    summary: summarizeSignalResearch(observations),
-    highConfidenceReview: deriveHighConfidenceSignalReview(
-      observations,
-      marketSnapshotMeta.dataAsOf,
-    ),
-    successfulCases: selectSuccessfulSignalCases(observations),
-    recentCases,
-  };
 }
 
 function errorResponse(error: unknown) {
@@ -62,15 +30,7 @@ export async function GET(request: Request) {
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
 
-    if (isLocalDevelopment(new URL(request.url))) {
-      return Response.json(responsePayload(localObservations()));
-    }
-
-    const { listD1SignalResearchObservations } = await import(
-      "../../../lib/signal-research-store.d1"
-    );
-    const observations = await listD1SignalResearchObservations(ownerId);
-    return Response.json(responsePayload(observations));
+    return Response.json(precomputedPayload);
   } catch (error) {
     return errorResponse(error);
   }
@@ -80,15 +40,19 @@ export async function POST(request: Request) {
   try {
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
+    const [{ getScannableSnapshotProfiles, marketSnapshotMeta }, research] =
+      await Promise.all([
+        import("../../../lib/market-data"),
+        import("../../../lib/signal-research"),
+      ]);
     const profiles = getScannableSnapshotProfiles();
 
     if (isLocalDevelopment(new URL(request.url))) {
-      const observations = localObservations();
       return Response.json({
         completed: true,
         nextProfileIndex: profiles.length,
         totalProfiles: profiles.length,
-        observationCount: observations.length,
+        observationCount: precomputedPayload.summary.totalSamples,
       });
     }
 
@@ -114,7 +78,7 @@ export async function POST(request: Request) {
       startIndex,
       startIndex + PROFILE_CHUNK_SIZE,
     );
-    const observations = buildSignalResearchObservations(selectedProfiles);
+    const observations = research.buildSignalResearchObservations(selectedProfiles);
     await upsertD1SignalResearchObservations(ownerId, observations);
 
     const nextProfileIndex = Math.min(

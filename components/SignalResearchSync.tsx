@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { readJsonResponse } from "../lib/read-json-response";
 
 export const SIGNAL_RESEARCH_SYNC_EVENT = "signal-research-sync";
 
@@ -23,7 +24,10 @@ export function SignalResearchSync() {
             method: "POST",
             signal: controller.signal,
           });
-          const payload = (await response.json()) as SyncResponse;
+          const payload = await readJsonResponse<SyncResponse>(
+            response,
+            "研究樣本同步服務暫時無法讀取",
+          );
           if (!response.ok) throw new Error(payload.error ?? "研究樣本同步失敗");
           window.dispatchEvent(
             new CustomEvent(SIGNAL_RESEARCH_SYNC_EVENT, { detail: payload }),

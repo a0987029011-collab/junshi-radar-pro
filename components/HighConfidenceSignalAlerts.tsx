@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { readJsonResponse } from "../lib/read-json-response";
 import type { HighConfidenceSignalReview } from "../lib/signal-research";
 import { SIGNAL_RESEARCH_SYNC_EVENT } from "./SignalResearchSync";
 
@@ -28,7 +29,10 @@ export function HighConfidenceSignalAlerts() {
       const response = await fetch("/api/signal-research", {
         cache: "no-store",
       });
-      const payload = (await response.json()) as ResearchAlertPayload;
+      const payload = await readJsonResponse<ResearchAlertPayload>(
+        response,
+        "候選評估服務暫時無法讀取",
+      );
       if (!response.ok) throw new Error(payload.error ?? "候選評估讀取失敗");
       setReview(payload.highConfidenceReview ?? null);
       setMessage("");

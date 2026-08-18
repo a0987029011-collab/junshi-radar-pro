@@ -60,7 +60,29 @@ try {
     if ($stdout) { Add-Content -LiteralPath $logPath -Value $stdout.TrimEnd() }
     if ($stderr) { Add-Content -LiteralPath $logPath -Value $stderr.TrimEnd() }
 
-    if ($process.ExitCode -eq 0) {
+    $completed = $process.ExitCode -eq 0
+    if ($completed) {
+      Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) building signal research payload"
+      $researchStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+      $researchStartInfo.FileName = $node
+      $researchStartInfo.Arguments = '--experimental-strip-types scripts/build-signal-research-payload.ts'
+      $researchStartInfo.WorkingDirectory = $projectRoot
+      $researchStartInfo.UseShellExecute = $false
+      $researchStartInfo.CreateNoWindow = $true
+      $researchStartInfo.RedirectStandardOutput = $true
+      $researchStartInfo.RedirectStandardError = $true
+      $researchProcess = [System.Diagnostics.Process]::Start($researchStartInfo)
+      $researchStdoutTask = $researchProcess.StandardOutput.ReadToEndAsync()
+      $researchStderrTask = $researchProcess.StandardError.ReadToEndAsync()
+      $researchProcess.WaitForExit()
+      $researchStdout = $researchStdoutTask.GetAwaiter().GetResult()
+      $researchStderr = $researchStderrTask.GetAwaiter().GetResult()
+      if ($researchStdout) { Add-Content -LiteralPath $logPath -Value $researchStdout.TrimEnd() }
+      if ($researchStderr) { Add-Content -LiteralPath $logPath -Value $researchStderr.TrimEnd() }
+      $completed = $researchProcess.ExitCode -eq 0
+    }
+
+    if ($completed) {
       $snapshot = Get-Content -LiteralPath $snapshotPath -Raw -Encoding utf8 | ConvertFrom-Json
       @{
         status = "succeeded"

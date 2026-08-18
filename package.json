@@ -1,6 +1,6 @@
 {
   "name": "junshi-radar-pro",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "packageManager": "pnpm@10.34.5",
   "engines": {
@@ -10,8 +10,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "data:refresh": "node --env-file-if-exists=.env.local scripts/fetch-market-snapshot.mjs",
-    "data:seed": "node scripts/fetch-market-snapshot.mjs --from-existing",
+    "data:refresh": "node --env-file-if-exists=.env.local scripts/fetch-market-snapshot.mjs && node --experimental-strip-types scripts/build-signal-research-payload.ts",
+    "data:seed": "node scripts/fetch-market-snapshot.mjs --from-existing && node --experimental-strip-types scripts/build-signal-research-payload.ts",
+    "data:research": "node --experimental-strip-types scripts/build-signal-research-payload.ts",
     "data:taishin-check": "node --env-file-if-exists=.env.local scripts/check-taishin-nova.mjs",
     "data:taishin-register": "node --env-file-if-exists=.env.local scripts/check-taishin-nova.mjs --register",
     "automation:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/automation/install-windows-tasks.ps1",
