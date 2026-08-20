@@ -2,6 +2,7 @@ import precomputedPayloadJson from "../../../data/signal-research-payload.json" 
   type: "json",
 };
 import type { SignalResearchPayload } from "../../../lib/signal-research-payload";
+import { isVercelRequest } from "../../../lib/vercel-guest-store";
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
 const LOCAL_OWNER_ID = "local-dev";
@@ -27,9 +28,7 @@ function errorResponse(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const ownerId = getOwnerId(request);
-    if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-
+    void request;
     return Response.json(precomputedPayload);
   } catch (error) {
     return errorResponse(error);
@@ -39,7 +38,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const ownerId = getOwnerId(request);
-    if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
+    if (!ownerId && !isVercelRequest(request)) {
+      return Response.json({ error: "請先登入" }, { status: 401 });
+    }
     const [{ getScannableSnapshotProfiles, marketSnapshotMeta }, research] =
       await Promise.all([
         import("../../../lib/market-data"),
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
       ]);
     const profiles = getScannableSnapshotProfiles();
 
-    if (isLocalDevelopment(new URL(request.url))) {
+    if (isLocalDevelopment(new URL(request.url)) || isVercelRequest(request)) {
       return Response.json({
         completed: true,
         nextProfileIndex: profiles.length,
@@ -55,6 +56,8 @@ export async function POST(request: Request) {
         observationCount: precomputedPayload.summary.totalSamples,
       });
     }
+
+    if (!ownerId) throw new Error("缺少研究資料擁有者");
 
     const {
       getD1SignalResearchSync,

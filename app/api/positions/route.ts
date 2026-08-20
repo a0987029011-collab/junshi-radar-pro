@@ -1,11 +1,21 @@
+import { getPositionMarketSnapshot } from "../../../lib/position-market-snapshot";
 import {
+  buildClosedPositionCase,
+  calculateNetSaleProceeds,
   normalizePositionBuyInput,
   normalizePositionSellInput,
+  summarizePositionTransactions,
+  type ClosedPositionCase,
   type PositionBuyInput,
   type PositionSellInput,
   type PositionSaleResult,
-  type PositionTransaction
+  type PositionTransaction,
 } from "../../../lib/position-transactions";
+import {
+  createVercelGuestStore,
+  isVercelRequest,
+} from "../../../lib/vercel-guest-store";
+import type { WatchlistItem } from "../../../lib/watchlist";
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
 const LOCAL_OWNER_ID = "local-dev";
@@ -64,11 +74,101 @@ function errorResponse(error: unknown) {
   return Response.json({ error: message }, { status: 400 });
 }
 
+function guestPositionKey(symbol: string) {
+  return `positions_${symbol}`;
+}
+
+async function handleGuestPositionPost(
+  request: Request,
+  body: Record<string, unknown>,
+) {
+  const store = createVercelGuestStore(request);
+  const symbol = typeof body.symbol === "string" ? body.symbol.trim() : "";
+  const key = guestPositionKey(symbol);
+  const transactions = store
+    .read<PositionTransaction[]>(key, [])
+    .slice()
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+  const now = new Date().toISOString();
+
+  if (body.action === "buy") {
+    const input = normalizePositionBuyInput(body);
+    transactions.push({
+      id: crypto.randomUUID(),
+      ...input,
+      kind: "buy",
+      marketSnapshot: getPositionMarketSnapshot(input.symbol, input.occurredAt),
+      createdAt: now,
+    });
+    store.write(key, transactions);
+    return store.json({ transactions, positionClosed: false });
+  }
+
+  if (body.action !== "sell") throw new Error("不支援的持股操作");
+  const input = normalizePositionSellInput(body);
+  const summary = summarizePositionTransactions(
+    transactions,
+    input.commissionDiscount,
+  );
+  if (summary.totalShares <= 0) throw new Error("目前沒有可賣出的持股");
+  if (input.shares > summary.totalShares) {
+    throw new Error(`賣出股數不可超過目前持有的 ${summary.totalShares} 股`);
+  }
+  const costBasisWithFees =
+    summary.totalCostWithFees * (input.shares / summary.totalShares);
+  const netSaleProceeds = calculateNetSaleProceeds(
+    input.shares,
+    input.price,
+    input.commissionDiscount,
+  );
+  const realizedReturnPercent =
+    costBasisWithFees > 0
+      ? ((netSaleProceeds - costBasisWithFees) / costBasisWithFees) * 100
+      : 0;
+  const sale: PositionTransaction = {
+    id: crypto.randomUUID(),
+    ...input,
+    kind: "sell",
+    marketSnapshot: getPositionMarketSnapshot(input.symbol, input.occurredAt),
+    averageEntryPrice: summary.averageEntryPrice,
+    realizedReturnPercent,
+    createdAt: now,
+  };
+  transactions.push(sale);
+  store.write(key, transactions);
+
+  const positionClosed = input.shares === summary.totalShares;
+  const closedCase = positionClosed ? buildClosedPositionCase(transactions) : null;
+  if (closedCase) {
+    const cases = store.read<ClosedPositionCase[]>("position_cases", []);
+    store.write(
+      "position_cases",
+      [
+        closedCase,
+        ...cases.filter((item) => item.caseKey !== closedCase.caseKey),
+      ].slice(0, 50),
+    );
+    const watchlist = store.read<WatchlistItem[]>("watchlist", []);
+    store.write(
+      "watchlist",
+      watchlist.filter((item) => item.symbol !== input.symbol),
+    );
+  }
+
+  return store.json({ transactions, positionClosed, closedCase });
+}
+
 export async function GET(request: Request) {
   try {
+    const symbol = readSymbol(new URL(request.url));
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      return store.json({
+        transactions: store.read<PositionTransaction[]>(guestPositionKey(symbol), []),
+      });
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-    const symbol = readSymbol(new URL(request.url));
     const transactions = await (await getStore(request)).list(ownerId, symbol);
     return Response.json({ transactions });
   } catch (error) {
@@ -78,9 +178,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const body = (await request.json()) as Record<string, unknown>;
+    if (isVercelRequest(request)) {
+      return await handleGuestPositionPost(request, body);
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-    const body = (await request.json()) as Record<string, unknown>;
     const store = await getStore(request);
     if (body.action === "buy") {
       const transactions = await store.addBuy(
@@ -104,9 +207,15 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const symbol = readSymbol(new URL(request.url));
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      const transactions = store.read<PositionTransaction[]>(guestPositionKey(symbol), []);
+      store.remove(guestPositionKey(symbol));
+      return store.json({ deleted: transactions.length, transactions: [] });
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-    const symbol = readSymbol(new URL(request.url));
     const deleted = await (await getStore(request)).remove(ownerId, symbol);
     return Response.json({ deleted, transactions: [] });
   } catch (error) {

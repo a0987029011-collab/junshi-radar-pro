@@ -1,4 +1,11 @@
-import { summarizeClosedPositionCases } from "../../../lib/position-transactions";
+import {
+  summarizeClosedPositionCases,
+  type ClosedPositionCase,
+} from "../../../lib/position-transactions";
+import {
+  createVercelGuestStore,
+  isVercelRequest,
+} from "../../../lib/vercel-guest-store";
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
 const LOCAL_OWNER_ID = "local-dev";
@@ -15,6 +22,17 @@ function getOwnerId(request: Request) {
 
 export async function GET(request: Request) {
   try {
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      const cases = store
+        .read<ClosedPositionCase[]>("position_cases", [])
+        .slice()
+        .sort((left, right) => right.closedAt.localeCompare(left.closedAt));
+      return store.json({
+        summary: summarizeClosedPositionCases(cases),
+        cases: cases.slice(0, 50),
+      });
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
     const cases = isLocalDevelopment(new URL(request.url))

@@ -4,6 +4,10 @@ import {
   type WatchlistItem
 } from "../../../lib/watchlist";
 import type { TrendlineCorrection } from "../../../lib/trendline-corrections";
+import {
+  createVercelGuestStore,
+  isVercelRequest,
+} from "../../../lib/vercel-guest-store";
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
 const LOCAL_OWNER_ID = "local-dev";
@@ -83,8 +87,34 @@ async function enrich(
   );
 }
 
+function guestCorrectionKey(symbol: string) {
+  return `trendlines_${symbol}_day_adjusted`;
+}
+
+async function enrichGuest(
+  store: ReturnType<typeof createVercelGuestStore>,
+  items: WatchlistItem[],
+) {
+  return Promise.all(
+    items.map((item) => {
+      const correction = store
+        .read<TrendlineCorrection[]>(guestCorrectionKey(item.symbol), [])
+        .at(-1) ?? null;
+      return getPositionMarketContext(item, correction);
+    }),
+  );
+}
+
 export async function GET(request: Request) {
   try {
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      const items = store
+        .read<WatchlistItem[]>("watchlist", [])
+        .slice()
+        .sort((left, right) => right.addedAt.localeCompare(left.addedAt));
+      return store.json({ items: await enrichGuest(store, items) });
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
     const items = await (await getStore(request)).list(ownerId);
@@ -96,9 +126,20 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const input = normalizeWatchlistInput(await request.json());
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      const current = store.read<WatchlistItem[]>("watchlist", []);
+      const items = current.some((item) => item.symbol === input.symbol)
+        ? current.map((item) =>
+            item.symbol === input.symbol ? { ...item, name: input.name } : item,
+          )
+        : [{ ...input, addedAt: new Date().toISOString() }, ...current];
+      store.write("watchlist", items);
+      return store.json({ items: await enrichGuest(store, items) });
+    }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-    const input = normalizeWatchlistInput(await request.json());
     const items = await (await getStore(request)).save(ownerId, input);
     return Response.json({ items: await enrich(request, ownerId, items) });
   } catch (error) {
@@ -108,10 +149,17 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const ownerId = getOwnerId(request);
-    if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
     const symbol = new URL(request.url).searchParams.get("symbol")?.trim() ?? "";
     if (!/^\d{4,6}$/.test(symbol)) throw new Error("股票代號格式不正確");
+    if (isVercelRequest(request)) {
+      const store = createVercelGuestStore(request);
+      const current = store.read<WatchlistItem[]>("watchlist", []);
+      const items = current.filter((item) => item.symbol !== symbol);
+      store.write("watchlist", items);
+      return store.json({ deleted: items.length !== current.length });
+    }
+    const ownerId = getOwnerId(request);
+    if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
     const deleted = await (await getStore(request)).remove(ownerId, symbol);
     return Response.json({ deleted });
   } catch (error) {
