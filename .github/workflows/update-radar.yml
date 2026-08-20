@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   schedule:
     # Cloud backup after the official close feeds have settled.
-    # GitHub Actions schedules use UTC. 13:45 UTC is 21:45 in Taipei.
-    - cron: "45 13 * * 1-5"
+    # GitHub Actions schedules use UTC. 05:45 UTC is 13:45 in Taipei.
+    - cron: "45 5 * * 1-5"
 
 permissions:
   contents: write
@@ -36,7 +36,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -54,12 +54,12 @@ jobs:
       - name: Commit refreshed radar
         shell: bash
         run: |
-          if git diff --quiet -- data/radar-snapshot.json; then
-            echo "Radar snapshot is already current."
+          if git diff --quiet -- data/radar-snapshot.json data/signal-research-payload.json; then
+            echo "Radar snapshot and research payload are already current."
             exit 0
           fi
           git config user.name "junshi-radar-bot"
           git config user.email "junshi-radar-bot@users.noreply.github.com"
-          git add data/radar-snapshot.json
+          git add data/radar-snapshot.json data/signal-research-payload.json
           git commit -m "data: refresh full-market radar"
           git push
