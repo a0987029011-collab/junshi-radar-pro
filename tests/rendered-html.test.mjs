@@ -4,6 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { marketSnapshotMeta } from "../lib/market-data.ts";
 
 const projectDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,7 +67,7 @@ test("server-renders the radar dashboard", async () => {
   const html = await response.text();
   assert.match(html, /軍師雷達/);
   assert.match(html, /版本 0\.3\.2/);
-  assert.match(html, /2026-08-11/);
+  assert.match(html, new RegExp(marketSnapshotMeta.dataAsOf));
   assert.doesNotMatch(html, /重新計算/);
   assert.doesNotMatch(html, /aria-label="掃描摘要"/);
   assert.match(html, /下降趨勢線紅 K 穿越/);
