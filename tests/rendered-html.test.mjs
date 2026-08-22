@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { marketSnapshotMeta } from "../lib/market-data.ts";
+import { APP_VERSION } from "../lib/app-version.ts";
 
 const projectDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,7 +67,7 @@ test("server-renders the radar dashboard", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /軍師雷達/);
-  assert.match(html, /版本 0\.8\.1/);
+  assert.match(html, new RegExp(`版本 ${APP_VERSION.replaceAll(".", "\\.")}`));
   assert.match(html, /更新時間/);
   assert.match(html, new RegExp(marketSnapshotMeta.dataAsOf));
   assert.doesNotMatch(html, /重新計算/);
@@ -116,6 +117,20 @@ test("server-renders the position risk page", async () => {
   assert.doesNotMatch(html, /預設資金規則/);
   assert.doesNotMatch(html, /第一目標價/);
   assert.doesNotMatch(html, /淨風險報酬比/);
+});
+
+test("server-renders the independent long-only reversal radar", async () => {
+  const response = await render("/reversal");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /轉勢雷達/);
+  assert.match(html, /只做多/);
+  assert.match(html, /最後有效新低/);
+  assert.match(html, /不再創低，等待突破/);
+  assert.match(html, /兩套訊號獨立績效/);
+  assert.match(html, /下降趨勢線紅 K 穿越/);
+  assert.match(html, /20 個交易日/);
+  assert.doesNotMatch(html, /放空訊號/);
 });
 
 test("server-renders the multi-wave strategy contract", async () => {

@@ -7,6 +7,7 @@ import { SignalResearchSync } from "./SignalResearchSync";
 
 const nav = [
   { href: "/", icon: "⌁", label: "雷達" },
+  { href: "/reversal", icon: "↗", label: "轉勢" },
   { href: "/positions", icon: "◎", label: "持股" },
   { href: "/research", icon: "⌬", label: "研究" },
   { href: "/strategy", icon: "⚙", label: "策略" }
