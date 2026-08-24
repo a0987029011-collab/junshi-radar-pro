@@ -112,7 +112,8 @@ test("server-renders the position risk page", async () => {
   assert.match(html, /週 K/);
   assert.match(html, /月 K/);
   assert.match(html, /單指左右拖曳可移動圖表/);
-  assert.match(html, /可用兩指縮放、單指左右拖曳/);
+  assert.doesNotMatch(html, /最新 OHLCV 已由/);
+  assert.doesNotMatch(html, /可用兩指縮放、單指左右拖曳，或按鈕與滑鼠滾輪操作/);
   assert.match(html, /預估浮動損益率（含費稅）/);
   assert.doesNotMatch(html, /預設資金規則/);
   assert.doesNotMatch(html, /第一目標價/);

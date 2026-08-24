@@ -26,7 +26,6 @@ import {
   type PriceAdjustment
 } from "../lib/market-data";
 import {
-  BREAKOUT_SIGNAL_NAME,
   BREAKOUT_TYPE_LABELS,
   getLatestBreakoutLowLine,
   getTrendlineBreakoutLowLine,
@@ -1294,32 +1293,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
           {historicalSupportLine ? <span><i className="legend-dot" style={{ background: "#ff9aa1" }} />過往防守</span> : null}
           {currentSupportLine ? <span><i className="legend-dot" style={{ background: "#ffd166" }} />目前防守</span> : null}
         </div>
-      </div>
-      {dataNote ? (
-        <div className="chart-source">
-          {symbol}｜最新 OHLCV 已由
-          {dataNote.latestVerification?.source ?? "官方市場"}核對（{dataNote.dataAsOf}） ·
-          {intradaySnapshot ? "盤中快照僅作預警 · " : "正式收盤 · "}
-          五年歷史 {dataNote.historyDays} 日 ·
-          {adjustment === "adjusted"
-            ? "還原 K：使用歷史資料供應商的還原因子"
-            : "原始 K：未還原除權息"}
-        </div>
-      ) : null}
-      <div className="chart-source">
-        {BREAKOUT_SIGNAL_NAME}｜顯示 {visibleBarCount} 根 · 可用兩指縮放、單指左右拖曳，或按鈕與滑鼠滾輪操作 · {editing ? "拖曳紫色 H1、H2 圓點校正" : "輕點 K 棒查看日期與四價"}
-        {systemTrendline.h1 && systemTrendline.line
-          ? `｜系統 H1 ${systemTrendline.h1.date} → H2 ${systemTrendline.line.endDate}`
-          : ""}
-        {manualLine
-          ? `｜第 ${editingMode === "append" ? visibleCorrections.length + 1 : Math.max(1, visibleCorrections.length)} 波 H1 ${manualLine.h1Date} → H2 ${manualLine.endDate}`
-          : ""}
-        {historicalSupportLine
-          ? `｜過往防守 ${formatPrice(historicalSupportLine.price)}`
-          : ""}
-        {currentSupportLine
-          ? `｜目前防守 ${currentBreakoutDate ?? "穿越紅 K"} 低點 ${formatPrice(currentSupportLine.price)}，收盤尚未跌破`
-          : ""}
       </div>
       <div className={`chart-inspection-bar ${inspectedCandle ? "active" : ""}`} aria-live="polite">
         {inspectedCandle ? (
