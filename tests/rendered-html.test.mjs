@@ -4,8 +4,12 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { marketSnapshotMeta } from "../lib/market-data.ts";
+import {
+  getScannableSnapshotProfiles,
+  marketSnapshotMeta
+} from "../lib/market-data.ts";
 import { APP_VERSION } from "../lib/app-version.ts";
+import { scanStocks } from "../lib/scanEngine.ts";
 
 const projectDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -79,10 +83,24 @@ test("server-renders the radar dashboard", async () => {
   assert.doesNotMatch(html, /今日訊號優先/);
   assert.doesNotMatch(html, /最近訊號日期/);
   assert.doesNotMatch(html, /最新 H1/);
-  assert.match(html, /紅 K 實體穿越/);
+  const snapshotProfiles = getScannableSnapshotProfiles();
+  const hasNegativeBodyCross = scanStocks(
+    snapshotProfiles,
+    snapshotProfiles.length
+  ).some(
+    (item) =>
+      item.closeConfirmation &&
+      item.breakoutType === "body-cross" &&
+      item.macdSignalMode === "negative-weakening"
+  );
+  if (hasNegativeBodyCross) {
+    assert.match(html, /紅 K 實體穿越/);
+    assert.match(html, /當根既有線價/);
+  } else {
+    assert.match(html, /本次掃描沒有符合/);
+  }
   assert.match(html, /零軸上雙線向上/);
   assert.match(html, /跳空紅 K 站上/);
-  assert.match(html, /當根既有線價/);
   assert.match(html, /DPO/);
   assert.doesNotMatch(html, /H3 成形/);
   assert.doesNotMatch(html, /A 級雷達/);
