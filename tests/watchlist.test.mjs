@@ -3,6 +3,7 @@ import test from "node:test";
 import { getMarketDataNote } from "../lib/market-data.ts";
 import { getPositionMarketContext } from "../lib/position-market-context.ts";
 import {
+  buildWatchlistStockOptions,
   normalizeWatchlistInput,
   watchlistItemKey,
 } from "../lib/watchlist.ts";
@@ -13,6 +14,22 @@ test("watchlist input keeps the stock identity needed by the position page", () 
     { symbol: "6505", name: "台塑化" },
   );
   assert.equal(watchlistItemKey("user-1", "6505"), "user-1:6505");
+});
+
+test("manual position options keep prior recommendations after the daily signal disappears", () => {
+  assert.deepEqual(
+    buildWatchlistStockOptions(
+      [{ symbol: "1808", name: "潤隆" }],
+      [
+        { symbol: "1808", name: "舊名稱不覆蓋今日資料" },
+        { symbol: "9941", name: "裕融" },
+      ],
+    ),
+    [
+      { symbol: "1808", name: "潤隆" },
+      { symbol: "9941", name: "裕融" },
+    ],
+  );
 });
 
 test("a tracked stock is enriched with live position context", () => {

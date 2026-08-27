@@ -118,6 +118,9 @@ test("server-renders the position risk page", async () => {
   assert.match(html, /分批進場/);
   assert.match(html, /追蹤與持股/);
   assert.match(html, /追蹤股票會先進入待登錄/);
+  assert.match(html, /自行新增持股/);
+  assert.match(html, /股票代號/);
+  assert.match(html, /加入追蹤／持股/);
   assert.match(html, /浮動損益率/);
   assert.match(html, /實際賣出價/);
   assert.match(html, /賣出股數/);

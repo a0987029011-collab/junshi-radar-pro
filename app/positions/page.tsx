@@ -1,9 +1,23 @@
 import type { Metadata } from "next";
+import signalResearchPayloadJson from "../../data/signal-research-payload.json" with {
+  type: "json"
+};
 import { PositionWorkspace } from "../../components/PositionWorkspace";
 import { RadarShell } from "../../components/RadarShell";
+import { verifiedCandidates } from "../../lib/market-data";
 import { getPositionMarketContext } from "../../lib/position-market-context";
+import type { SignalResearchPayload } from "../../lib/signal-research-payload";
+import { buildWatchlistStockOptions } from "../../lib/watchlist";
 
 export const metadata: Metadata = { title: "持股風控" };
+
+const signalResearchPayload =
+  signalResearchPayloadJson as unknown as SignalResearchPayload;
+const manualStockOptions = buildWatchlistStockOptions(
+  verifiedCandidates,
+  signalResearchPayload.recentCases,
+  signalResearchPayload.successfulCases
+);
 
 export default async function PositionsPage({
   searchParams
@@ -26,6 +40,7 @@ export default async function PositionsPage({
       <PositionWorkspace
         initialItem={initialItem}
         initialSelectedSymbol={symbol}
+        stockOptions={manualStockOptions}
       />
       <section className="section">
         <article className="panel info-card">
