@@ -1,4 +1,5 @@
 import { getMarketCandles } from "./market-data.ts";
+import { calculateDpo, calculateMacd } from "./indicators.ts";
 import {
   BREAKOUT_SIGNAL_NAME,
   scanH1Trendline,
@@ -69,6 +70,21 @@ export interface TimeframeResearchSnapshot {
   };
 }
 
+export const AUTONOMOUS_FILTER_KEY =
+  "bullish-pullback-volume-breakout" as const;
+
+export interface RecentKResearchSnapshot {
+  lookbackDays: 3;
+  priorDownCloseCount: number;
+  priorDayWasDown: boolean;
+  currentLongRed: boolean;
+  currentVolumeRatio20: number;
+  macdPositiveRising: boolean;
+  macdHistogramReexpanded: boolean;
+  dpoTurnedUp: boolean;
+  autonomousPattern: typeof AUTONOMOUS_FILTER_KEY | "none";
+}
+
 export interface SignalOutcomeSnapshot {
   windowDays: SignalOutcomeWindowDays;
   targetReturnPercent: number;
@@ -97,6 +113,7 @@ export interface SignalResearchObservation {
     month: TimeframeResearchSnapshot | null;
     week: TimeframeResearchSnapshot | null;
     day: TimeframeResearchSnapshot | null;
+    recentK?: RecentKResearchSnapshot;
   };
   outcomes: Record<SignalOutcomeWindowDays, SignalOutcomeSnapshot>;
   status: "monitoring" | "matured";
@@ -141,6 +158,21 @@ export const HIGH_CONFIDENCE_THRESHOLDS = {
   minimumAverageAdversePercent: -10,
 } as const;
 
+export interface HighConfidenceSignalEvidence {
+  samples: number;
+  uniqueStocks: number;
+  uniqueSignalDates: number;
+  hitRatePercent: number;
+  wilsonLowerBoundPercent: number;
+  recentSamples: number;
+  recentHitRatePercent: number;
+  baselineHitRatePercent: number;
+  liftPercent: number;
+  averageCloseReturnPercent: number;
+  averageMaxReturnPercent: number;
+  averageAdversePercent: number;
+}
+
 export interface HighConfidenceSignalCandidate {
   observationKey: string;
   symbol: string;
@@ -153,20 +185,15 @@ export interface HighConfidenceSignalCandidate {
   breakoutType: SignalResearchObservation["breakoutType"];
   macdSignalMode: SignalResearchObservation["macdSignalMode"];
   logicLabels: string[];
-  evidence: {
-    samples: number;
-    uniqueStocks: number;
-    uniqueSignalDates: number;
-    hitRatePercent: number;
-    wilsonLowerBoundPercent: number;
-    recentSamples: number;
-    recentHitRatePercent: number;
-    baselineHitRatePercent: number;
-    liftPercent: number;
-    averageCloseReturnPercent: number;
-    averageMaxReturnPercent: number;
-    averageAdversePercent: number;
-  };
+  evidence: HighConfidenceSignalEvidence;
+}
+
+export interface AutonomousFilterReview {
+  key: typeof AUTONOMOUS_FILTER_KEY;
+  label: string;
+  status: "monitoring" | "active";
+  matchedCurrentSignals: number;
+  evidence: HighConfidenceSignalEvidence;
 }
 
 export interface HighConfidenceSignalReview {
@@ -174,6 +201,7 @@ export interface HighConfidenceSignalReview {
   evaluatedSignals: number;
   qualifiedSignals: number;
   candidates: HighConfidenceSignalCandidate[];
+  autonomousFilters: AutonomousFilterReview[];
   thresholds: typeof HIGH_CONFIDENCE_THRESHOLDS;
 }
 
@@ -218,6 +246,64 @@ function candlePattern(candle: Candle) {
   if (bullish) return "紅 K";
   if (bearish) return "黑 K";
   return "平盤 K";
+}
+
+function timeframeGroupKey(time: string, timeframe: Exclude<Timeframe, "day">) {
+  if (timeframe === "month") return time.slice(0, 7);
+  const date = new Date(`${time}T00:00:00Z`);
+  const weekday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - weekday);
+  return date.toISOString().slice(0, 10);
+}
+
+function recalculateIndicators(candles: Candle[]) {
+  const closes = candles.map((candle) => candle.close);
+  const macd = calculateMacd(closes);
+  const dpo = calculateDpo(closes);
+  return candles.map((candle, index) => ({
+    ...candle,
+    macd: macd.macd[index],
+    signal: macd.signal[index],
+    histogram: macd.histogram[index],
+    dpo: dpo[index],
+  }));
+}
+
+/**
+ * Builds the week/month series exactly as it was knowable on signalDate.
+ * The current aggregate candle is rebuilt from daily candles only through the
+ * signal date so its later high, close and volume cannot leak into research.
+ */
+export function buildNoLookAheadTimeframeCandles(
+  aggregateCandles: Candle[],
+  dailyCandles: Candle[],
+  signalDate: string,
+  timeframe: Exclude<Timeframe, "day">,
+) {
+  const groupKey = timeframeGroupKey(signalDate, timeframe);
+  const partialRows = dailyCandles.filter(
+    (candle) =>
+      candle.time <= signalDate &&
+      timeframeGroupKey(candle.time, timeframe) === groupKey,
+  );
+  if (!partialRows.length) return [];
+
+  const partialCandle: Candle = {
+    time: signalDate,
+    open: partialRows[0].open,
+    high: Math.max(...partialRows.map((candle) => candle.high)),
+    low: Math.min(...partialRows.map((candle) => candle.low)),
+    close: partialRows.at(-1)?.close ?? partialRows[0].close,
+    volume: partialRows.reduce((total, candle) => total + candle.volume, 0),
+    macd: 0,
+    signal: 0,
+    histogram: 0,
+    dpo: 0,
+  };
+  const history = aggregateCandles.filter(
+    (candle) => timeframeGroupKey(candle.time, timeframe) < groupKey,
+  );
+  return recalculateIndicators([...history, partialCandle]);
 }
 
 export function buildTimeframeResearchSnapshot(
@@ -363,12 +449,81 @@ export function buildSignalOutcomes(
 
 function timeframeSnapshot(
   symbol: string,
-  timeframe: Timeframe,
+  timeframe: Exclude<Timeframe, "day">,
   signalDate: string,
+  dailyCandles: Candle[],
 ) {
-  const candles = getMarketCandles(symbol, timeframe, "adjusted") ?? [];
-  const index = candles.findLastIndex((candle) => candle.time <= signalDate);
-  return buildTimeframeResearchSnapshot(candles, index, timeframe);
+  const aggregateCandles =
+    getMarketCandles(symbol, timeframe, "adjusted") ?? [];
+  const candles = buildNoLookAheadTimeframeCandles(
+    aggregateCandles,
+    dailyCandles,
+    signalDate,
+    timeframe,
+  );
+  return buildTimeframeResearchSnapshot(candles, candles.length - 1, timeframe);
+}
+
+export function buildRecentKResearchSnapshot(
+  candles: Candle[],
+  signalIndex: number,
+  macdSignalMode: MacdSignalMode | null,
+): RecentKResearchSnapshot {
+  const current = candles[signalIndex];
+  const previous = candles[signalIndex - 1];
+  const previous2 = candles[signalIndex - 2];
+  const recent = candles.slice(Math.max(0, signalIndex - 3), signalIndex);
+  const priorDownCloseCount = recent.reduce((count, candle, index) => {
+    const previousCandle = candles[signalIndex - recent.length + index - 1];
+    return count + (previousCandle && candle.close < previousCandle.close ? 1 : 0);
+  }, 0);
+  const range = current
+    ? Math.max(current.high - current.low, Number.EPSILON)
+    : Number.EPSILON;
+  const currentLongRed = Boolean(
+    current &&
+      current.close > current.open &&
+      (current.close - current.open) / range >= 0.65,
+  );
+  const volumeWindow = candles
+    .slice(Math.max(0, signalIndex - 19), signalIndex + 1)
+    .map((candle) => candle.volume);
+  const average20 = average(volumeWindow);
+  const currentVolumeRatio20 =
+    current && average20 > 0 ? current.volume / average20 : 0;
+  const priorDayWasDown = Boolean(
+    previous && previous2 && previous.close < previous2.close,
+  );
+  const macdPositiveRising = macdSignalMode === "positive-rising";
+  const macdHistogramReexpanded = Boolean(
+    current && previous && current.histogram > previous.histogram,
+  );
+  const dpoTurnedUp = Boolean(
+    current &&
+      previous &&
+      previous2 &&
+      previous.dpo <= previous2.dpo &&
+      current.dpo > previous.dpo,
+  );
+  const matchesAutonomousPattern =
+    priorDayWasDown &&
+    currentLongRed &&
+    currentVolumeRatio20 >= 1.2 &&
+    macdPositiveRising;
+
+  return {
+    lookbackDays: 3,
+    priorDownCloseCount,
+    priorDayWasDown,
+    currentLongRed,
+    currentVolumeRatio20,
+    macdPositiveRising,
+    macdHistogramReexpanded,
+    dpoTurnedUp,
+    autonomousPattern: matchesAutonomousPattern
+      ? AUTONOMOUS_FILTER_KEY
+      : "none",
+  };
 }
 
 export function buildSignalResearchObservation(
@@ -404,9 +559,24 @@ export function buildSignalResearchObservation(
     entryPrice: signalCandle.close,
     linePrice: signal.linePrice,
     snapshot: {
-      month: timeframeSnapshot(profile.symbol, "month", signal.date),
-      week: timeframeSnapshot(profile.symbol, "week", signal.date),
+      month: timeframeSnapshot(
+        profile.symbol,
+        "month",
+        signal.date,
+        dailyCandles,
+      ),
+      week: timeframeSnapshot(
+        profile.symbol,
+        "week",
+        signal.date,
+        dailyCandles,
+      ),
       day: buildTimeframeResearchSnapshot(dailyCandles, signalIndex, "day"),
+      recentK: buildRecentKResearchSnapshot(
+        dailyCandles,
+        signalIndex,
+        signal.macdSignalMode ?? null,
+      ),
     },
     outcomes,
     status: outcomes[60].complete ? "matured" : "monitoring",
@@ -526,6 +696,83 @@ function averageOutcome(
   return values.length ? average(values) : 0;
 }
 
+function evaluateHighConfidenceEvidence(
+  matching: SignalResearchObservation[],
+  baselineHitRatePercent: number,
+) {
+  const splitIndex = Math.max(1, Math.floor(matching.length * 0.7));
+  const recent = matching.slice(splitIndex);
+  const hits = matching.filter(
+    (observation) => observation.outcomes[20].targetReached,
+  ).length;
+  const hitRate = hitRatePercent(matching);
+  const recentHitRate = hitRatePercent(recent);
+  const evidence: HighConfidenceSignalEvidence = {
+    samples: matching.length,
+    uniqueStocks: new Set(matching.map((item) => item.symbol)).size,
+    uniqueSignalDates: new Set(matching.map((item) => item.signalDate)).size,
+    hitRatePercent: hitRate,
+    wilsonLowerBoundPercent: wilsonLowerBoundPercent(hits, matching.length),
+    recentSamples: recent.length,
+    recentHitRatePercent: recentHitRate,
+    baselineHitRatePercent,
+    liftPercent: hitRate - baselineHitRatePercent,
+    averageCloseReturnPercent: averageOutcome(
+      matching,
+      "closeReturnPercent",
+    ),
+    averageMaxReturnPercent: averageOutcome(matching, "maxReturnPercent"),
+    averageAdversePercent: averageOutcome(matching, "maxDrawdownPercent"),
+  };
+  const passes =
+    evidence.samples >= HIGH_CONFIDENCE_THRESHOLDS.minimumSamples &&
+    evidence.uniqueStocks >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueStocks &&
+    evidence.uniqueSignalDates >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueDates &&
+    evidence.hitRatePercent >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumHitRatePercent &&
+    evidence.wilsonLowerBoundPercent >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumWilsonLowerBoundPercent &&
+    evidence.recentSamples >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumRecentSamples &&
+    evidence.recentHitRatePercent >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumRecentHitRatePercent &&
+    evidence.liftPercent >= HIGH_CONFIDENCE_THRESHOLDS.minimumLiftPercent &&
+    evidence.averageCloseReturnPercent >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumAverageCloseReturnPercent &&
+    evidence.averageAdversePercent >=
+      HIGH_CONFIDENCE_THRESHOLDS.minimumAverageAdversePercent;
+  return { evidence, passes };
+}
+
+function matchesAutonomousFilter(observation: SignalResearchObservation) {
+  return (
+    observation.snapshot.recentK?.autonomousPattern === AUTONOMOUS_FILTER_KEY
+  );
+}
+
+function candidateFromEvidence(
+  current: SignalResearchObservation,
+  evidence: HighConfidenceSignalEvidence,
+  extraLogicLabels: string[] = [],
+): HighConfidenceSignalCandidate {
+  return {
+    observationKey: current.observationKey,
+    symbol: current.symbol,
+    name: current.name,
+    market: current.market,
+    sector: current.sector,
+    signalDate: current.signalDate,
+    entryPrice: current.entryPrice,
+    signalKind: current.signalKind,
+    breakoutType: current.breakoutType,
+    macdSignalMode: current.macdSignalMode,
+    logicLabels: [...highConfidenceLogicLabels(current), ...extraLogicLabels],
+    evidence,
+  };
+}
+
 export function deriveHighConfidenceSignalReview(
   observations: SignalResearchObservation[],
   dataAsOf: string,
@@ -545,77 +792,44 @@ export function deriveHighConfidenceSignalReview(
     );
   const baselineHitRatePercent = hitRatePercent(historical);
 
+  const autonomousMatching = historical.filter(matchesAutonomousFilter);
+  const autonomousEvaluation = evaluateHighConfidenceEvidence(
+    autonomousMatching,
+    baselineHitRatePercent,
+  );
+  const autonomousFilters: AutonomousFilterReview[] = [
+    {
+      key: AUTONOMOUS_FILTER_KEY,
+      label: "多頭回檔後放量長紅",
+      status: autonomousEvaluation.passes ? "active" : "monitoring",
+      matchedCurrentSignals: currentSignals.filter(matchesAutonomousFilter)
+        .length,
+      evidence: autonomousEvaluation.evidence,
+    },
+  ];
+
   const candidates = currentSignals.flatMap(
     (current): HighConfidenceSignalCandidate[] => {
       const signature = highConfidenceSignature(current);
       const matching = historical.filter(
         (observation) => highConfidenceSignature(observation) === signature,
       );
-      const splitIndex = Math.max(1, Math.floor(matching.length * 0.7));
-      const recent = matching.slice(splitIndex);
-      const hits = matching.filter(
-        (observation) => observation.outcomes[20].targetReached,
-      ).length;
-      const hitRate = hitRatePercent(matching);
-      const recentHitRate = hitRatePercent(recent);
-      const wilsonLowerBound = wilsonLowerBoundPercent(hits, matching.length);
-      const lift = hitRate - baselineHitRatePercent;
-      const averageCloseReturn = averageOutcome(
+      const baseEvaluation = evaluateHighConfidenceEvidence(
         matching,
-        "closeReturnPercent",
+        baselineHitRatePercent,
       );
-      const averageMaxReturn = averageOutcome(matching, "maxReturnPercent");
-      const averageAdverse = averageOutcome(matching, "maxDrawdownPercent");
-      const uniqueStocks = new Set(matching.map((item) => item.symbol)).size;
-      const uniqueSignalDates = new Set(
-        matching.map((item) => item.signalDate),
-      ).size;
-      const passes =
-        matching.length >= HIGH_CONFIDENCE_THRESHOLDS.minimumSamples &&
-        uniqueStocks >= HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueStocks &&
-        uniqueSignalDates >= HIGH_CONFIDENCE_THRESHOLDS.minimumUniqueDates &&
-        hitRate >= HIGH_CONFIDENCE_THRESHOLDS.minimumHitRatePercent &&
-        wilsonLowerBound >=
-          HIGH_CONFIDENCE_THRESHOLDS.minimumWilsonLowerBoundPercent &&
-        recent.length >= HIGH_CONFIDENCE_THRESHOLDS.minimumRecentSamples &&
-        recentHitRate >=
-          HIGH_CONFIDENCE_THRESHOLDS.minimumRecentHitRatePercent &&
-        lift >= HIGH_CONFIDENCE_THRESHOLDS.minimumLiftPercent &&
-        averageCloseReturn >=
-          HIGH_CONFIDENCE_THRESHOLDS.minimumAverageCloseReturnPercent &&
-        averageAdverse >=
-          HIGH_CONFIDENCE_THRESHOLDS.minimumAverageAdversePercent;
 
-      if (!passes) return [];
-      return [
-        {
-          observationKey: current.observationKey,
-          symbol: current.symbol,
-          name: current.name,
-          market: current.market,
-          sector: current.sector,
-          signalDate: current.signalDate,
-          entryPrice: current.entryPrice,
-          signalKind: current.signalKind,
-          breakoutType: current.breakoutType,
-          macdSignalMode: current.macdSignalMode,
-          logicLabels: highConfidenceLogicLabels(current),
-          evidence: {
-            samples: matching.length,
-            uniqueStocks,
-            uniqueSignalDates,
-            hitRatePercent: hitRate,
-            wilsonLowerBoundPercent: wilsonLowerBound,
-            recentSamples: recent.length,
-            recentHitRatePercent: recentHitRate,
-            baselineHitRatePercent,
-            liftPercent: lift,
-            averageCloseReturnPercent: averageCloseReturn,
-            averageMaxReturnPercent: averageMaxReturn,
-            averageAdversePercent: averageAdverse,
-          },
-        },
-      ];
+      if (baseEvaluation.passes) {
+        return [candidateFromEvidence(current, baseEvaluation.evidence)];
+      }
+      if (autonomousEvaluation.passes && matchesAutonomousFilter(current)) {
+        return [
+          candidateFromEvidence(current, autonomousEvaluation.evidence, [
+            "自主驗證：多頭回檔後放量長紅",
+          ]),
+        ];
+      }
+      return [];
     },
   );
 
@@ -631,6 +845,7 @@ export function deriveHighConfidenceSignalReview(
           left.evidence.wilsonLowerBoundPercent ||
         left.symbol.localeCompare(right.symbol),
     ),
+    autonomousFilters,
     thresholds: HIGH_CONFIDENCE_THRESHOLDS,
   };
 }

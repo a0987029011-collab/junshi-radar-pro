@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { readJsonResponse } from "../lib/read-json-response";
 import type {
+  HighConfidenceSignalReview,
   SignalResearchObservation,
   SignalResearchSummary,
   TimeframeResearchSnapshot,
@@ -14,6 +15,7 @@ interface ResearchPayload {
   dataAsOf: string;
   generatedAt: string;
   summary: SignalResearchSummary;
+  highConfidenceReview: HighConfidenceSignalReview;
   successfulCases: SignalResearchObservation[];
   recentCases: SignalResearchObservation[];
   error?: string;
@@ -186,7 +188,7 @@ export default function SignalResearchDashboard() {
             <span className="badge badge-aplus">PAPER OBSERVATION</span>
             <h2 className="mt-3 text-2xl font-semibold text-white">訊號歷史樣本庫</h2>
             <p className="mt-2 max-w-3xl leading-7 text-slate-300">
-              每個雷達訊號都先當成紙上觀察，不需要真的買進。系統保存訊號當下的月、週、日 K 棒、量價、均線與扣抵、MACD、DPO，再回頭補算 5、20、60 個交易日結果。
+              每個雷達訊號都先當成紙上觀察，不需要真的買進。系統只使用訊號當日以前可知的月、週、日 K 棒，並保存前 1～3 根 K、量價、均線與扣抵、MACD、DPO，再向前補算 5、20、60 個交易日結果。
             </p>
           </div>
           <div className="rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
@@ -205,6 +207,43 @@ export default function SignalResearchDashboard() {
               <span className="text-xs text-slate-500">{label}</span>
               <strong className="mt-2 block text-lg text-white">{value}</strong>
             </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-cyan-400/20 bg-slate-900/80 p-6">
+        <h2 className="text-2xl font-semibold text-white">自主篩選研究</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          新邏輯先獨立驗證，不改動原本雷達候選。只有樣本數、整體與近期達標率、保守信賴下界、期末報酬及風險全部過關，才會自動加入高信心篩選。
+        </p>
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          {payload.highConfidenceReview.autonomousFilters.map((filter) => (
+            <article
+              className="rounded-2xl border border-slate-800 bg-slate-950/55 p-5"
+              key={filter.key}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <strong className="text-lg text-white">{filter.label}</strong>
+                <span
+                  className={
+                    filter.status === "active"
+                      ? "rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-200"
+                      : "rounded-full bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-200"
+                  }
+                >
+                  {filter.status === "active" ? "已通過，可參與篩選" : "觀察中，尚未啟用"}
+                </span>
+              </div>
+              <p className="mt-3 text-sm text-slate-400">
+                MACD 零軸上雙線向上，前一日收盤回檔，當日出現量能至少 1.2 倍的長紅 K。
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div><span className="block text-xs text-slate-500">成熟樣本</span><strong className="mt-1 block text-white">{filter.evidence.samples}</strong></div>
+                <div><span className="block text-xs text-slate-500">20 日達標率</span><strong className="mt-1 block text-cyan-200">{filter.evidence.hitRatePercent.toFixed(1)}%</strong></div>
+                <div><span className="block text-xs text-slate-500">近期達標率</span><strong className="mt-1 block text-cyan-200">{filter.evidence.recentHitRatePercent.toFixed(1)}%</strong></div>
+                <div><span className="block text-xs text-slate-500">最大不利平均</span><strong className="mt-1 block text-rose-200">{formatPercent(filter.evidence.averageAdversePercent)}</strong></div>
+              </div>
+            </article>
           ))}
         </div>
       </section>
