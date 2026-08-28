@@ -63,9 +63,18 @@ const priceFormatter = new Intl.NumberFormat("zh-TW", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
 });
+const percentFormatter = new Intl.NumberFormat("zh-TW", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+  signDisplay: "always"
+});
 
 function formatPrice(value: number) {
   return priceFormatter.format(value);
+}
+
+function formatPercent(value: number) {
+  return `${percentFormatter.format(value)}%`;
 }
 
 type EditableTrendline = {
@@ -719,6 +728,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const visibleBarCount = viewport.visibleCount;
   const inspectedCandle =
     inspectedIndex === undefined ? undefined : candles[inspectedIndex];
+  const inspectedPreviousClose =
+    inspectedIndex === undefined || inspectedIndex === 0
+      ? undefined
+      : candles[inspectedIndex - 1]?.close;
+  const inspectedChangePercent =
+    inspectedCandle && inspectedPreviousClose && inspectedPreviousClose !== 0
+      ? ((inspectedCandle.close - inspectedPreviousClose) / inspectedPreviousClose) * 100
+      : undefined;
   const currentBreakoutDate =
     currentSupportLine === undefined
       ? undefined
@@ -1305,9 +1322,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
             <span className="chart-inspection-item"><small>低</small><strong>{formatPrice(inspectedCandle.low)}</strong></span>
             <span className="chart-inspection-item"><small>開</small><strong>{formatPrice(inspectedCandle.open)}</strong></span>
             <span className="chart-inspection-item"><small>{intradaySnapshot ? "現" : "收"}</small><strong>{formatPrice(inspectedCandle.close)}</strong></span>
+            {inspectedChangePercent !== undefined ? (
+              <span className="chart-inspection-item chart-inspection-change">
+                <small>漲跌幅</small>
+                <strong className={inspectedChangePercent > 0 ? "positive" : inspectedChangePercent < 0 ? "negative" : ""}>
+                  {formatPercent(inspectedChangePercent)}
+                </strong>
+              </span>
+            ) : null}
           </>
         ) : (
-          <span className="chart-inspection-hint">輕點 K 棒查看時間與四價；單指左右拖曳可移動圖表</span>
+          <span className="chart-inspection-hint">輕點 K 棒查看時間、四價與漲跌幅；單指左右拖曳可移動圖表</span>
         )}
       </div>
       <canvas
@@ -1321,7 +1346,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             : ""
         }${
           inspectedCandle
-            ? `；已選取 ${inspectedCandle.time}，最高 ${formatPrice(inspectedCandle.high)}，最低 ${formatPrice(inspectedCandle.low)}，開盤 ${formatPrice(inspectedCandle.open)}，${intradaySnapshot ? "現價" : "收盤"} ${formatPrice(inspectedCandle.close)}`
+            ? `；已選取 ${inspectedCandle.time}，最高 ${formatPrice(inspectedCandle.high)}，最低 ${formatPrice(inspectedCandle.low)}，開盤 ${formatPrice(inspectedCandle.open)}，${intradaySnapshot ? "現價" : "收盤"} ${formatPrice(inspectedCandle.close)}${inspectedChangePercent === undefined ? "" : `，漲跌幅 ${formatPercent(inspectedChangePercent)}`}`
             : ""
         }`}
         className="chart-canvas"
@@ -1342,7 +1367,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
         style={{ touchAction: "none" }}
         title={editing
           ? "按住紫色的校正 H1 或 H2 圓點，拖到你認定的 K 棒"
-          : `輕點查看日期、最高、最低、開盤、${intradaySnapshot ? "現價" : "收盤價"}；單指左右移動；兩指或滾輪縮放；雙擊顯示全部 K 棒`}
+          : `輕點查看日期、最高、最低、開盤、${intradaySnapshot ? "現價" : "收盤價"}與漲跌幅；單指左右移動；兩指或滾輪縮放；雙擊顯示全部 K 棒`}
       />
       {editing && draft && manualLine ? (
         <div className="trendline-editor">

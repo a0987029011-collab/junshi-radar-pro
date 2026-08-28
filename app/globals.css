@@ -403,6 +403,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .chart-inspection-item { display: inline-flex; flex: 0 0 auto; align-items: baseline; gap: 6px; }
 .chart-inspection-item small { color: var(--cyan); font-size: 9px; font-weight: 750; letter-spacing: .08em; }
 .chart-inspection-item strong { color: #f4f7fa; font-family: var(--mono); font-size: 11px; font-weight: 850; letter-spacing: .02em; }
+.chart-inspection-change strong.positive { color: var(--up); }
+.chart-inspection-change strong.negative { color: var(--down); }
 .chart-inspection-time { padding-right: 4px; }
 .chart-inspection-time strong { color: var(--amber); }
 .chart-inspection-hint { color: var(--quiet); font-size: 9px; }

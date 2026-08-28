@@ -132,6 +132,7 @@ test("server-renders the position risk page", async () => {
   assert.match(html, /日 K/);
   assert.match(html, /週 K/);
   assert.match(html, /月 K/);
+  assert.match(html, /輕點 K 棒查看時間、四價與漲跌幅/);
   assert.match(html, /單指左右拖曳可移動圖表/);
   assert.doesNotMatch(html, /最新 OHLCV 已由/);
   assert.doesNotMatch(html, /可用兩指縮放、單指左右拖曳，或按鈕與滑鼠滾輪操作/);
