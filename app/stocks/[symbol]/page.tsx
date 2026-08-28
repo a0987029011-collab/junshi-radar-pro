@@ -180,7 +180,7 @@ export default async function StockPage({
             <small className="mt-1 block text-slate-500">盤中預警仍需三項確認條件</small>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
-            <p className="text-xs text-slate-500">{intradaySnapshot ? "盤中現價" : "收盤 close"} 站線</p>
+            <p className="text-xs text-slate-500">{intradaySnapshot ? "盤中現價" : "收盤價"}站線</p>
             <strong className={`mt-2 block text-lg ${stateTone(Boolean(currentEvaluation?.closeCrossed))}`}>
               {currentEvaluation?.closeCrossed ? "已站上" : "未站上"}
             </strong>
@@ -199,9 +199,9 @@ export default async function StockPage({
             </strong>
             <small className="mt-1 block text-slate-500">
               {scanResult.breakoutType === "body-cross"
-                ? "open ≤ 線價 < close，實體直接穿線"
+                ? "開盤價 ≤ 線價 < 收盤價，實體直接穿線"
                 : scanResult.breakoutType === "gap-above"
-                  ? "線價 < open < close，開盤已在線上"
+                  ? "線價 < 開盤價 < 收盤價，開盤已在線上"
                   : "等待紅 K 收盤站上線"}
             </small>
           </div>
@@ -209,7 +209,7 @@ export default async function StockPage({
 
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {[
-            ["紅 K", redCandle, "close > open"],
+            ["紅 K", redCandle, "收盤價 > 開盤價"],
             ["MACD weakening", scanResult.macdWeakening, "負 histogram 絕對值縮小"],
             ["DPO upturn", scanResult.dpoUpturn, "前一根為低點，本根上彎"]
           ].map(([label, active, description]) => (

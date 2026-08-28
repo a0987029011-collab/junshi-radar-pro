@@ -189,14 +189,14 @@ export default function ScannerDashboard() {
     {
       id: 'gap-above',
       title: '跳空紅 K 站上',
-      description: '當根線價 < open < close；開盤時已在線上方，實體沒有穿線。',
+      description: '當根線價 < 開盤價 < 收盤價；開盤時已在線上方，實體沒有穿線。',
       items: gapAboveResults,
       tone: 'text-amber-200'
     },
     {
       id: 'intraday-warning',
       title: '盤中預警',
-      description: 'high 已穿越既有線且紅 K、MACD、DPO 成立，但 close 尚未站上線。',
+      description: '最高價已穿越既有線且紅 K、MACD、DPO 成立，但收盤價尚未站上線。',
       items: intradayWarningResults,
       tone: 'text-cyan-200'
     }

@@ -141,6 +141,16 @@ test("server-renders the position risk page", async () => {
   assert.doesNotMatch(html, /淨風險報酬比/);
 });
 
+test("server-renders stock price labels in Chinese", async () => {
+  const [profile] = getScannableSnapshotProfiles();
+  const response = await render(`/stocks/${profile.symbol}`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /收盤價(?:<!-- -->)?站線/);
+  assert.match(html, /收盤價 &gt; 開盤價/);
+  assert.doesNotMatch(html, /收盤 close/);
+});
+
 test("server-renders the independent long-only reversal radar", async () => {
   const response = await render("/reversal");
   assert.equal(response.status, 200);
