@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeTrendlineCorrectionInput,
+  trendlineCorrectionReasons,
   trendlineCorrectionKey,
   trendlineWaveKey,
 } from "../lib/trendline-corrections.ts";
@@ -24,6 +25,15 @@ function validInput(overrides = {}) {
 
 test("normalizes a valid manual trendline correction", () => {
   assert.deepEqual(normalizeTrendlineCorrectionInput(validInput()), validInput());
+});
+
+test("accepts the prior low defense holding as a learning reason", () => {
+  const reason = "之前最低價防守未跌破";
+  assert.ok(trendlineCorrectionReasons.includes(reason));
+  assert.equal(
+    normalizeTrendlineCorrectionInput(validInput({ reason })).reason,
+    reason,
+  );
 });
 
 test("requires a descending line with H1 before H2", () => {

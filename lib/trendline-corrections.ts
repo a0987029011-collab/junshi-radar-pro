@@ -3,6 +3,7 @@ export const trendlineCorrectionReasons = [
   "H2 應接觸另一根 K 棒",
   "趨勢線穿越了不該穿越的 K 棒",
   "這不是有效的下降趨勢",
+  "之前最低價防守未跌破",
   "其他",
 ] as const;
 
