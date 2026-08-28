@@ -17,6 +17,7 @@ import {
   getAnchoredEndOffset,
   getPannedEndOffset,
   getPinchVisibleBars,
+  getTrendlineAnchorRadius,
   resolveChartViewport
 } from "../lib/chart-viewport";
 import {
@@ -51,7 +52,7 @@ const timeframeLabels: { value: Timeframe; label: string }[] = [
 ];
 
 const DEFAULT_VISIBLE_BARS = 180;
-const MIN_VISIBLE_BARS = 30;
+const MIN_VISIBLE_BARS = 1;
 const getProjectionBarCount = (visibleCount: number) =>
   Math.min(12, Math.max(6, Math.round(visibleCount * 0.08)));
 const getPointDistance = (
@@ -196,6 +197,8 @@ function drawChart(
   const projectionBarCount = getProjectionBarCount(visibleCount);
   const xStep = chartWidth / (visibleCount + projectionBarCount);
   const candleWidth = Math.max(1.5, xStep * 0.58);
+  const systemAnchorRadius = getTrendlineAnchorRadius(candleWidth);
+  const manualAnchorRadius = getTrendlineAnchorRadius(candleWidth, true);
   const toX = (index: number) =>
     pad.left + xStep * (index - viewStart) + xStep / 2;
   const toPriceY = (value: number) =>
@@ -349,9 +352,9 @@ function drawChart(
     ctx.globalAlpha = manualLine ? 0.58 : 1;
     ctx.fillStyle = "#f6bd4b";
     ctx.strokeStyle = "#090e13";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = Math.max(0.8, systemAnchorRadius * 0.34);
     ctx.beginPath();
-    ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+    ctx.arc(x, y, systemAnchorRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#f6bd4b";
@@ -369,9 +372,9 @@ function drawChart(
     ctx.globalAlpha = manualLine ? 0.58 : 1;
     ctx.fillStyle = "#63d8ee";
     ctx.strokeStyle = "#090e13";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = Math.max(0.8, systemAnchorRadius * 0.34);
     ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.arc(x, y, systemAnchorRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#63d8ee";
@@ -391,9 +394,9 @@ function drawChart(
       const y = toPriceY(price);
       ctx.fillStyle = "#d894ff";
       ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = Math.max(0.8, manualAnchorRadius * 0.34);
       ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.arc(x, y, manualAnchorRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = "#efd2ff";

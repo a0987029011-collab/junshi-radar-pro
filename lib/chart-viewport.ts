@@ -9,6 +9,18 @@ export type ChartViewport = {
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
 
+export function getTrendlineAnchorRadius(
+  candleWidth: number,
+  manual = false,
+) {
+  const safeWidth = Number.isFinite(candleWidth)
+    ? Math.max(0, candleWidth)
+    : 0;
+  const minimum = manual ? 2.4 : 1.7;
+  const maximum = manual ? 3.6 : 2.8;
+  return clamp(safeWidth * 0.72, minimum, maximum);
+}
+
 export function resolveChartViewport(
   totalBars: number,
   requestedVisibleBars: number,

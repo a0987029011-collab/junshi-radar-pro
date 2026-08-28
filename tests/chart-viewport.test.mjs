@@ -4,6 +4,7 @@ import {
   getAnchoredEndOffset,
   getPannedEndOffset,
   getPinchVisibleBars,
+  getTrendlineAnchorRadius,
   resolveChartViewport
 } from "../lib/chart-viewport.ts";
 
@@ -31,6 +32,18 @@ test("pinch distance controls visible K bar count", () => {
   assert.equal(getPinchVisibleBars(180, 100, 200, 30, 500), 90);
   assert.equal(getPinchVisibleBars(180, 100, 50, 30, 500), 360);
   assert.equal(getPinchVisibleBars(40, 100, 400, 30, 500), 30);
+});
+
+test("chart zoom can enlarge down to a single K bar", () => {
+  assert.equal(getPinchVisibleBars(4, 100, 800, 1, 500), 1);
+  assert.equal(resolveChartViewport(120, 1, 1, 0).visibleCount, 1);
+});
+
+test("trendline anchor dots shrink with narrow K bars", () => {
+  assert.equal(getTrendlineAnchorRadius(1.5), 1.7);
+  assert.equal(getTrendlineAnchorRadius(1.5, true), 2.4);
+  assert.equal(getTrendlineAnchorRadius(20), 2.8);
+  assert.equal(getTrendlineAnchorRadius(20, true), 3.6);
 });
 
 test("horizontal drag converts pixels to a bounded history offset", () => {
