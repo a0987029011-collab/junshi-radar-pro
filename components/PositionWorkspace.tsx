@@ -85,7 +85,13 @@ export function PositionWorkspace({
       `${closedCase.name} 已全部賣出並歸檔；實際淨損益 ${
         closedCase.realizedReturnPercent >= 0 ? "+" : ""
       }${closedCase.realizedReturnPercent.toFixed(2)}%，${
-        closedCase.targetReached ? "已達成短期 +10% 目標" : "未達短期 +10% 目標"
+        closedCase.marketOutcome?.targetReached === true
+          ? "持有期間市場曾達 +10%，已列為選股成功案例"
+          : closedCase.marketOutcome?.targetReached === false
+            ? "持有期間市場未達 +10%"
+            : "市場是否曾達 +10% 待盤後資料確認"
+      }；實際交易${
+        closedCase.targetReached ? "已落袋 +10%" : "未落袋 +10%"
       }。`
     );
   }

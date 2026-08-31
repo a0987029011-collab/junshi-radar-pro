@@ -37,6 +37,16 @@ export interface PositionSellInput {
 
 export const SHORT_TERM_TARGET_RETURN_PERCENT = 10;
 
+export interface ClosedPositionMarketOutcome {
+  baselinePrice: number;
+  maximumPrice: number | null;
+  maximumReturnPercent: number | null;
+  targetReached: boolean | null;
+  targetReachedAt: string | null;
+  observedThrough: string | null;
+  complete: boolean;
+}
+
 export interface ClosedPositionCase {
   caseKey: string;
   symbol: string;
@@ -54,6 +64,7 @@ export interface ClosedPositionCase {
   realizedReturnPercent: number;
   targetReturnPercent: number;
   targetReached: boolean;
+  marketOutcome?: ClosedPositionMarketOutcome;
   entrySnapshot: PositionMarketSnapshot | null;
   exitSnapshot: PositionMarketSnapshot | null;
   transactions: PositionTransaction[];
@@ -71,6 +82,9 @@ export interface ClosedPositionResearchSummary {
   profitableCases: number;
   targetReachedCases: number;
   targetHitRatePercent: number | null;
+  marketEvaluatedCases: number;
+  marketTargetReachedCases: number;
+  marketTargetHitRatePercent: number | null;
   averageReturnPercent: number | null;
   averageHoldingDays: number | null;
   averageProfit: number | null;
@@ -416,6 +430,104 @@ export function buildClosedPositionCase(
   };
 }
 
+function taipeiMarketDate(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+export function buildClosedPositionMarketOutcome(
+  closedCase: ClosedPositionCase,
+  candles: ReadonlyArray<{ time: string; high: number }>,
+): ClosedPositionMarketOutcome {
+  const openedDate = taipeiMarketDate(closedCase.openedAt);
+  const closedDate = taipeiMarketDate(closedCase.closedAt);
+  const targetPrice =
+    closedCase.averageEntryPrice * (1 + closedCase.targetReturnPercent / 100);
+  const observedCandles = candles.filter(
+    (candle) => candle.time >= openedDate && candle.time <= closedDate,
+  );
+  const observedTransactions = closedCase.transactions.filter((transaction) => {
+    const date = taipeiMarketDate(transaction.occurredAt);
+    return date >= openedDate && date <= closedDate;
+  });
+  const candleMaximum = observedCandles.reduce<number | null>(
+    (maximum, candle) =>
+      Number.isFinite(candle.high)
+        ? Math.max(maximum ?? candle.high, candle.high)
+        : maximum,
+    null,
+  );
+  const transactionMaximum = observedTransactions.reduce<number | null>(
+    (maximum, transaction) =>
+      Number.isFinite(transaction.price)
+        ? Math.max(maximum ?? transaction.price, transaction.price)
+        : maximum,
+    null,
+  );
+  const maximumPrice =
+    candleMaximum === null
+      ? transactionMaximum
+      : transactionMaximum === null
+        ? candleMaximum
+        : Math.max(candleMaximum, transactionMaximum);
+  const maximumReturnPercent =
+    maximumPrice !== null && closedCase.averageEntryPrice > 0
+      ? ((maximumPrice - closedCase.averageEntryPrice) /
+          closedCase.averageEntryPrice) *
+        100
+      : null;
+  const reachedCandle = observedCandles.find(
+    (candle) => candle.high >= targetPrice,
+  );
+  const reachedTransaction = observedTransactions.find(
+    (transaction) => transaction.price >= targetPrice,
+  );
+  const reachedAt = [
+    reachedCandle?.time ?? null,
+    reachedTransaction ? taipeiMarketDate(reachedTransaction.occurredAt) : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .sort()[0] ?? null;
+  const observedThrough =
+    candles
+      .map((candle) => candle.time)
+      .filter((date) => date <= closedDate)
+      .sort()
+      .at(-1) ?? null;
+  const hasCompleteCoverage = Boolean(
+    candles.some((candle) => candle.time >= closedDate),
+  );
+  const targetReached = reachedAt
+    ? true
+    : hasCompleteCoverage
+      ? false
+      : null;
+
+  return {
+    baselinePrice: closedCase.averageEntryPrice,
+    maximumPrice,
+    maximumReturnPercent,
+    targetReached,
+    targetReachedAt: reachedAt,
+    observedThrough,
+    complete: targetReached !== null,
+  };
+}
+
+export function withClosedPositionMarketOutcome(
+  closedCase: ClosedPositionCase,
+  candles: ReadonlyArray<{ time: string; high: number }>,
+): ClosedPositionCase {
+  return {
+    ...closedCase,
+    marketOutcome: buildClosedPositionMarketOutcome(closedCase, candles),
+  };
+}
+
 export function summarizeClosedPositionCases(
   cases: ClosedPositionCase[]
 ): ClosedPositionResearchSummary {
@@ -425,6 +537,9 @@ export function summarizeClosedPositionCases(
       profitableCases: 0,
       targetReachedCases: 0,
       targetHitRatePercent: null,
+      marketEvaluatedCases: 0,
+      marketTargetReachedCases: 0,
+      marketTargetHitRatePercent: null,
       averageReturnPercent: null,
       averageHoldingDays: null,
       averageProfit: null,
@@ -433,11 +548,23 @@ export function summarizeClosedPositionCases(
   const total = (values: number[]) =>
     values.reduce((sum, value) => sum + value, 0);
   const targetReachedCases = cases.filter((item) => item.targetReached).length;
+  const marketEvaluatedCases = cases.filter(
+    (item) => item.marketOutcome?.targetReached !== null && item.marketOutcome,
+  ).length;
+  const marketTargetReachedCases = cases.filter(
+    (item) => item.marketOutcome?.targetReached === true,
+  ).length;
   return {
     totalCases: cases.length,
     profitableCases: cases.filter((item) => item.realizedProfit > 0).length,
     targetReachedCases,
     targetHitRatePercent: (targetReachedCases / cases.length) * 100,
+    marketEvaluatedCases,
+    marketTargetReachedCases,
+    marketTargetHitRatePercent:
+      marketEvaluatedCases > 0
+        ? (marketTargetReachedCases / marketEvaluatedCases) * 100
+        : null,
     averageReturnPercent:
       total(cases.map((item) => item.realizedReturnPercent)) / cases.length,
     averageHoldingDays:

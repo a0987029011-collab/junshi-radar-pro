@@ -9,6 +9,7 @@ import {
   roundUpToTaiwanStockTick,
   summarizeClosedPositionCases,
   summarizePositionTransactions,
+  withClosedPositionMarketOutcome,
 } from "../lib/position-transactions.ts";
 
 function transaction(id, kind, shares, price, occurredAt) {
@@ -179,4 +180,55 @@ test("closed-position summary keeps wins and misses in the same dataset", () => 
   assert.equal(summary.profitableCases, 1);
   assert.equal(summary.targetReachedCases, 1);
   assert.equal(summary.targetHitRatePercent, 50);
+});
+
+test("market opportunity success stays separate from a losing realized trade", () => {
+  const baseCase = buildClosedPositionCase([
+    transaction("a", "buy", 314, 191.5, "2026-08-25T01:00:00.000Z"),
+    transaction("b", "sell", 314, 177.5, "2026-08-31T04:13:08.000Z"),
+  ]);
+  assert.ok(baseCase);
+
+  const closedCase = withClosedPositionMarketOutcome(baseCase, [
+    { time: "2026-08-25", high: 193 },
+    { time: "2026-08-26", high: 194 },
+    { time: "2026-08-27", high: 211 },
+    { time: "2026-08-28", high: 216.5 },
+  ]);
+
+  assert.equal(closedCase.targetReached, false);
+  assert.ok(closedCase.realizedReturnPercent < 0);
+  assert.equal(closedCase.marketOutcome.targetReached, true);
+  assert.equal(closedCase.marketOutcome.targetReachedAt, "2026-08-27");
+  assert.equal(closedCase.marketOutcome.maximumPrice, 216.5);
+  assert.ok(closedCase.marketOutcome.maximumReturnPercent > 13);
+
+  const summary = summarizeClosedPositionCases([closedCase]);
+  assert.equal(summary.marketEvaluatedCases, 1);
+  assert.equal(summary.marketTargetReachedCases, 1);
+  assert.equal(summary.marketTargetHitRatePercent, 100);
+  assert.equal(summary.targetReachedCases, 0);
+});
+
+test("a not-yet-published closing candle stays pending instead of becoming a miss", () => {
+  const baseCase = buildClosedPositionCase([
+    transaction("a", "buy", 100, 100, "2026-08-25T01:00:00.000Z"),
+    transaction("b", "sell", 100, 95, "2026-08-31T04:13:08.000Z"),
+  ]);
+  assert.ok(baseCase);
+
+  const pending = withClosedPositionMarketOutcome(baseCase, [
+    { time: "2026-08-25", high: 102 },
+    { time: "2026-08-28", high: 105 },
+  ]);
+  assert.equal(pending.marketOutcome.targetReached, null);
+  assert.equal(pending.marketOutcome.complete, false);
+  assert.equal(summarizeClosedPositionCases([pending]).marketEvaluatedCases, 0);
+
+  const completeMiss = withClosedPositionMarketOutcome(baseCase, [
+    { time: "2026-08-25", high: 102 },
+    { time: "2026-08-31", high: 105 },
+  ]);
+  assert.equal(completeMiss.marketOutcome.targetReached, false);
+  assert.equal(completeMiss.marketOutcome.complete, true);
 });

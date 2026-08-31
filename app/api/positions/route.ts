@@ -1,10 +1,12 @@
 import { getPositionMarketSnapshot } from "../../../lib/position-market-snapshot";
+import { getMarketCandles } from "../../../lib/market-data";
 import {
   buildClosedPositionCase,
   calculateNetSaleProceeds,
   normalizePositionBuyInput,
   normalizePositionSellInput,
   summarizePositionTransactions,
+  withClosedPositionMarketOutcome,
   type ClosedPositionCase,
   type PositionBuyInput,
   type PositionSellInput,
@@ -76,6 +78,15 @@ function errorResponse(error: unknown) {
 
 function guestPositionKey(symbol: string) {
   return `positions_${symbol}`;
+}
+
+function addMarketOutcome(closedCase: ClosedPositionCase | null) {
+  return closedCase
+    ? withClosedPositionMarketOutcome(
+        closedCase,
+        getMarketCandles(closedCase.symbol, "day", "adjusted") ?? [],
+      )
+    : null;
 }
 
 async function handleGuestPositionPost(
@@ -155,7 +166,11 @@ async function handleGuestPositionPost(
     );
   }
 
-  return store.json({ transactions, positionClosed, closedCase });
+  return store.json({
+    transactions,
+    positionClosed,
+    closedCase: addMarketOutcome(closedCase),
+  });
 }
 
 export async function GET(request: Request) {
@@ -196,7 +211,10 @@ export async function POST(request: Request) {
         ownerId,
         normalizePositionSellInput(body),
       );
-      return Response.json(result);
+      return Response.json({
+        ...result,
+        closedCase: addMarketOutcome(result.closedCase),
+      });
     } else {
       throw new Error("不支援的持股操作");
     }

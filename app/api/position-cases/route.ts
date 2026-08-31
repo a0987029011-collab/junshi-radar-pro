@@ -1,7 +1,9 @@
 import {
   summarizeClosedPositionCases,
+  withClosedPositionMarketOutcome,
   type ClosedPositionCase,
 } from "../../../lib/position-transactions";
+import { getMarketCandles } from "../../../lib/market-data";
 import {
   createVercelGuestStore,
   isVercelRequest,
@@ -20,14 +22,23 @@ function getOwnerId(request: Request) {
   return isLocalDevelopment(new URL(request.url)) ? LOCAL_OWNER_ID : null;
 }
 
+function addMarketOutcomes(cases: ClosedPositionCase[]) {
+  return cases.map((closedCase) =>
+    withClosedPositionMarketOutcome(
+      closedCase,
+      getMarketCandles(closedCase.symbol, "day", "adjusted") ?? [],
+    ),
+  );
+}
+
 export async function GET(request: Request) {
   try {
     if (isVercelRequest(request)) {
       const store = createVercelGuestStore(request);
-      const cases = store
+      const cases = addMarketOutcomes(store
         .read<ClosedPositionCase[]>("position_cases", [])
         .slice()
-        .sort((left, right) => right.closedAt.localeCompare(left.closedAt));
+        .sort((left, right) => right.closedAt.localeCompare(left.closedAt)));
       return store.json({
         summary: summarizeClosedPositionCases(cases),
         cases: cases.slice(0, 50),
@@ -35,13 +46,14 @@ export async function GET(request: Request) {
     }
     const ownerId = getOwnerId(request);
     if (!ownerId) return Response.json({ error: "請先登入" }, { status: 401 });
-    const cases = isLocalDevelopment(new URL(request.url))
+    const storedCases = isLocalDevelopment(new URL(request.url))
       ? await (
           await import("../../../lib/closed-position-case-store.local")
         ).listLocalClosedPositionCases(ownerId)
       : await (
           await import("../../../lib/closed-position-case-store.d1")
         ).listD1ClosedPositionCases(ownerId);
+    const cases = addMarketOutcomes(storedCases);
     return Response.json({
       summary: summarizeClosedPositionCases(cases),
       cases: cases.slice(0, 50),

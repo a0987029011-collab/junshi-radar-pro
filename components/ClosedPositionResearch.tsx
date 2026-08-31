@@ -82,7 +82,7 @@ export function ClosedPositionResearch() {
           </span>
           <h2 className="mt-3 text-2xl font-semibold text-white">實際持股結案資料庫</h2>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            全部賣完後自動歸檔，依買賣費稅後的真實淨損益判定是否達成短期 +10%。成功與失敗都保留，不只挑好看的案例。
+            全部賣完後自動歸檔；選股是否曾上漲 +10%，與最後實際落袋損益分開統計。市場機會和真實交易結果都保留，不會互相覆蓋。
           </p>
         </div>
         <span className="rounded-2xl border border-slate-700 bg-slate-950/55 px-4 py-3 text-xs text-slate-400">
@@ -90,11 +90,12 @@ export function ClosedPositionResearch() {
         </span>
       </div>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {[
           ["已結案", `${summary.totalCases} 檔`],
-          ["達成 +10%", `${summary.targetReachedCases} 檔`],
-          ["目標達成率", formatPercent(summary.targetHitRatePercent)],
+          ["選股曾達 +10%", `${summary.marketTargetReachedCases} 檔`],
+          ["選股達成率", formatPercent(summary.marketTargetHitRatePercent)],
+          ["實際落袋 +10%", `${summary.targetReachedCases} 檔`],
           ["平均淨報酬", formatPercent(summary.averageReturnPercent)],
           ["平均持有", summary.averageHoldingDays === null ? "—" : `${summary.averageHoldingDays.toFixed(1)} 天`],
         ].map(([label, value]) => (
@@ -109,7 +110,7 @@ export function ClosedPositionResearch() {
         <div className="mt-5 space-y-3">
           {cases.slice(0, 10).map((item) => (
             <Link
-              className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 transition hover:border-cyan-400/35 sm:grid-cols-[1.2fr_1fr_1fr_1fr]"
+              className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 transition hover:border-cyan-400/35 sm:grid-cols-[1.2fr_0.8fr_1fr_1.2fr_0.9fr]"
               href={`/stocks/${item.symbol}`}
               key={item.caseKey}
             >
@@ -118,8 +119,15 @@ export function ClosedPositionResearch() {
                 <span className="mt-1 block text-xs text-slate-500">{formatDate(item.openedAt)} ～ {formatDate(item.closedAt)}</span>
               </div>
               <div className="text-sm"><span className="block text-xs text-slate-500">持有期間</span><strong className="text-slate-200">{item.holdingDays} 天</strong></div>
+              <div className="text-sm">
+                <span className="block text-xs text-slate-500">市場最高機會</span>
+                <strong className={item.marketOutcome?.targetReached ? "text-emerald-200" : "text-slate-300"}>
+                  {formatPercent(item.marketOutcome?.maximumReturnPercent ?? null)} · {item.marketOutcome?.targetReached === true ? "選股成功" : item.marketOutcome?.targetReached === false ? "未達 +10%" : "待盤後確認"}
+                </strong>
+                {item.marketOutcome?.targetReachedAt ? <span className="mt-1 block text-xs text-slate-500">首次達標 {item.marketOutcome.targetReachedAt}</span> : null}
+              </div>
               <div className="text-sm"><span className="block text-xs text-slate-500">實際淨損益</span><strong className={item.realizedProfit >= 0 ? "text-emerald-200" : "text-rose-200"}>{formatMoney(item.realizedProfit)} · {formatPercent(item.realizedReturnPercent)}</strong></div>
-              <div className="text-sm"><span className="block text-xs text-slate-500">短期 +10%</span><strong className={item.targetReached ? "text-emerald-200" : "text-slate-400"}>{item.targetReached ? "達成" : "未達"}</strong></div>
+              <div className="text-sm"><span className="block text-xs text-slate-500">實際落袋 +10%</span><strong className={item.targetReached ? "text-emerald-200" : "text-slate-400"}>{item.targetReached ? "達成" : "未達"}</strong></div>
             </Link>
           ))}
         </div>
