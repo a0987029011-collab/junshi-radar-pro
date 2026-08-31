@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import type { PositionMarketSnapshot } from "../lib/position-market-snapshot";
 import type {
   ClosedPositionCase,
@@ -10,6 +17,139 @@ import type {
   SignalOutcomeSnapshot,
   TimeframeResearchSnapshot,
 } from "../lib/signal-research";
+import type {
+  PaperExitReason,
+  PaperOrderStatus,
+  PaperTradeStatus,
+} from "../lib/paper-trading";
+
+export const paperAccounts = sqliteTable("paper_accounts", {
+  id: text("id").primaryKey(),
+  startingCash: real("starting_cash").notNull(),
+  cash: real("cash").notNull(),
+  strategyVersion: text("strategy_version").notNull(),
+  lastProcessedDate: text("last_processed_date"),
+  maximumEquity: real("maximum_equity").notNull(),
+  maximumDrawdownPercent: real("maximum_drawdown_percent").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const paperOrders = sqliteTable(
+  "paper_orders",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    observationKey: text("observation_key").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    sector: text("sector").notNull(),
+    signalDate: text("signal_date").notNull(),
+    status: text("status").$type<PaperOrderStatus>().notNull(),
+    selectionScore: integer("selection_score").notNull(),
+    selectionReasons: text("selection_reasons", { mode: "json" })
+      .$type<string[]>()
+      .notNull(),
+    strategyVersion: text("strategy_version").notNull(),
+    signalClose: real("signal_close").notNull(),
+    linePrice: real("line_price").notNull(),
+    filledTradeId: text("filled_trade_id"),
+    skippedReason: text("skipped_reason"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_orders_account_observation").on(
+      table.accountId,
+      table.observationKey,
+    ),
+    index("idx_paper_orders_account_status_date").on(
+      table.accountId,
+      table.status,
+      table.signalDate,
+    ),
+  ],
+);
+
+export const paperTrades = sqliteTable(
+  "paper_trades",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    orderId: text("order_id").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    sector: text("sector").notNull(),
+    signalDate: text("signal_date").notNull(),
+    entryDate: text("entry_date").notNull(),
+    entryPrice: real("entry_price").notNull(),
+    shares: integer("shares").notNull(),
+    entryCommission: real("entry_commission").notNull(),
+    totalCost: real("total_cost").notNull(),
+    stopPrice: real("stop_price").notNull(),
+    targetPrice: real("target_price").notNull(),
+    targetNetReturnPercent: real("target_net_return_percent").notNull(),
+    status: text("status").$type<PaperTradeStatus>().notNull(),
+    exitDate: text("exit_date"),
+    exitPrice: real("exit_price"),
+    exitCommission: real("exit_commission"),
+    transactionTax: real("transaction_tax"),
+    netSaleProceeds: real("net_sale_proceeds"),
+    exitReason: text("exit_reason").$type<PaperExitReason>(),
+    queuedExitReason: text("queued_exit_reason").$type<PaperExitReason>(),
+    queuedExitSignalDate: text("queued_exit_signal_date"),
+    realizedProfit: real("realized_profit"),
+    realizedReturnPercent: real("realized_return_percent"),
+    holdingDays: integer("holding_days").notNull(),
+    maximumFavorablePercent: real("maximum_favorable_percent").notNull(),
+    maximumAdversePercent: real("maximum_adverse_percent").notNull(),
+    selectionScore: integer("selection_score").notNull(),
+    selectionReasons: text("selection_reasons", { mode: "json" })
+      .$type<string[]>()
+      .notNull(),
+    strategyVersion: text("strategy_version").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_trades_account_order").on(
+      table.accountId,
+      table.orderId,
+    ),
+    index("idx_paper_trades_account_status_entry").on(
+      table.accountId,
+      table.status,
+      table.entryDate,
+    ),
+  ],
+);
+
+export const paperDailyDecisions = sqliteTable(
+  "paper_daily_decisions",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    marketDate: text("market_date").notNull(),
+    actionSummary: text("action_summary").notNull(),
+    candidatesEvaluated: integer("candidates_evaluated").notNull(),
+    selectedOrderIds: text("selected_order_ids", { mode: "json" })
+      .$type<string[]>()
+      .notNull(),
+    notes: text("notes", { mode: "json" }).$type<string[]>().notNull(),
+    cash: real("cash").notNull(),
+    equity: real("equity").notNull(),
+    openPositions: integer("open_positions").notNull(),
+    queuedOrders: integer("queued_orders").notNull(),
+    strategyVersion: text("strategy_version").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_decisions_account_date").on(
+      table.accountId,
+      table.marketDate,
+    ),
+  ],
+);
 
 export const trendlineCorrections = sqliteTable(
   "trendline_corrections",

@@ -6,6 +6,7 @@ import {
   type SignalResearchObservation,
   type SignalResearchSummary,
 } from "./signal-research.ts";
+import { PAPER_TRADING_START_DATE } from "./paper-trading.ts";
 
 export interface SignalResearchPayload {
   dataAsOf: string;
@@ -14,6 +15,7 @@ export interface SignalResearchPayload {
   highConfidenceReview: HighConfidenceSignalReview;
   successfulCases: SignalResearchObservation[];
   recentCases: SignalResearchObservation[];
+  paperTradingCandidates: SignalResearchObservation[];
 }
 
 export function buildSignalResearchPayload(
@@ -35,5 +37,16 @@ export function buildSignalResearchPayload(
     ),
     successfulCases: selectSuccessfulSignalCases(observations),
     recentCases,
+    paperTradingCandidates: observations
+      .filter(
+        (observation) =>
+          observation.signalKind === "close-confirmed" &&
+          observation.signalDate >= PAPER_TRADING_START_DATE,
+      )
+      .sort(
+        (left, right) =>
+          left.signalDate.localeCompare(right.signalDate) ||
+          left.symbol.localeCompare(right.symbol),
+      ),
   };
 }

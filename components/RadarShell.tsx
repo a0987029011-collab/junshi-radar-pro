@@ -4,11 +4,13 @@ import { AutoReloadOnDataChange } from "./AutoReloadOnDataChange";
 import { APP_RELEASE_DATE, APP_VERSION } from "../lib/app-version";
 import { marketSnapshotMeta } from "../lib/market-data";
 import { SignalResearchSync } from "./SignalResearchSync";
+import { PaperTradingSync } from "./PaperTradingSync";
 
 const nav = [
   { href: "/", icon: "⌁", label: "雷達" },
   { href: "/reversal", icon: "↗", label: "轉勢" },
   { href: "/positions", icon: "◎", label: "持股" },
+  { href: "/paper-trading", icon: "▣", label: "模擬" },
   { href: "/research", icon: "⌬", label: "研究" },
   { href: "/strategy", icon: "⚙", label: "策略" }
 ];
@@ -26,6 +28,7 @@ export function RadarShell({
   return (
     <div className="app-shell">
       <SignalResearchSync />
+      <PaperTradingSync />
       <AutoReloadOnDataChange
         initialSnapshotGeneratedAt={marketSnapshotMeta.generatedAt}
       />

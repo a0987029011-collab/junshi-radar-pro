@@ -142,6 +142,15 @@ test("server-renders the position risk page", async () => {
   assert.doesNotMatch(html, /淨風險報酬比/);
 });
 
+test("server-renders the independent paper trading area", async () => {
+  const response = await render("/paper-trading");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /模擬交易/);
+  assert.match(html, /自己選、自己買、自己賣/);
+  assert.match(html, /正在接續模擬帳戶的最新進度/);
+});
+
 test("server-renders stock price labels in Chinese", async () => {
   const [profile] = getScannableSnapshotProfiles();
   const response = await render(`/stocks/${profile.symbol}`);
