@@ -1,6 +1,6 @@
 {
   "name": "junshi-radar-pro",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "private": true,
   "packageManager": "pnpm@10.34.5",
   "engines": {

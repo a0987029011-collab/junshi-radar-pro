@@ -119,6 +119,18 @@ test("after-hours paper entries fill at the signal close and stay within 10% of 
   assert.ok(trade);
   assert.equal(trade.entryDate, "2026-08-31");
   assert.equal(trade.entryPrice, 102);
+  const grossCost = trade.entryPrice * trade.shares;
+  assert.equal(
+    trade.entryCommission,
+    Math.round(
+      calculateBrokerCommission(grossCost, PAPER_RULES.commissionDiscount) *
+        10_000,
+    ) / 10_000,
+  );
+  assert.equal(
+    trade.totalCost,
+    Math.round((grossCost + trade.entryCommission) * 10_000) / 10_000,
+  );
   assert.ok(trade.totalCost <= 60_000);
   const nextGross = trade.entryPrice * (trade.shares + 1);
   assert.ok(

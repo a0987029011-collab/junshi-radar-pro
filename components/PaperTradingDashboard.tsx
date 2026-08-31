@@ -17,6 +17,14 @@ function money(value: number) {
   }).format(value);
 }
 
+function detailedMoney(value: number) {
+  return new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency: "TWD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function price(value: number | null) {
   return value === null
     ? "—"
@@ -298,9 +306,14 @@ export function PaperTradingDashboard() {
                       {percent(trade.unrealizedReturnPercent)}
                     </strong>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                     {[
                       ["買進價", price(trade.entryPrice)],
+                      [
+                        "買進總成本（含手續費）",
+                        detailedMoney(trade.totalCost),
+                      ],
+                      ["買進手續費", detailedMoney(trade.entryCommission)],
                       ["目前收盤價", price(trade.currentPrice)],
                       ["10% 防守價", price(trade.stopPrice)],
                       ["淨利 10% 目標價", price(trade.targetPrice)],
