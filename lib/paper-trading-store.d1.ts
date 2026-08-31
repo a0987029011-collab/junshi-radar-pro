@@ -118,7 +118,23 @@ export async function saveD1PaperTradingState(state: PaperTradingState) {
       db
         .insert(paperDailyDecisions)
         .values(decision)
-        .onConflictDoNothing({ target: paperDailyDecisions.id }),
+        .onConflictDoUpdate({
+          target: [
+            paperDailyDecisions.accountId,
+            paperDailyDecisions.marketDate,
+          ],
+          set: {
+            actionSummary: decision.actionSummary,
+            candidatesEvaluated: decision.candidatesEvaluated,
+            selectedOrderIds: decision.selectedOrderIds,
+            notes: decision.notes,
+            cash: decision.cash,
+            equity: decision.equity,
+            openPositions: decision.openPositions,
+            queuedOrders: decision.queuedOrders,
+            strategyVersion: decision.strategyVersion,
+          },
+        }),
     ),
   );
 }

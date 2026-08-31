@@ -576,28 +576,42 @@ export function advancePaperTradingState(
       rounded(drawdown),
     );
     state.account.updatedAt = timestamp;
-    const reconciliationId = `${PAPER_ACCOUNT_ID}:${reconciliationDate}:${PAPER_STRATEGY_VERSION}`;
-    if (!state.decisions.some((decision) => decision.id === reconciliationId)) {
-      state.decisions.push({
-        id: reconciliationId,
-        accountId: PAPER_ACCOUNT_ID,
-        marketDate: reconciliationDate,
-        actionSummary: `規則更新：盤後假設成交 ${legacyFilledOrders.length} 檔`,
-        candidatesEvaluated: 0,
-        selectedOrderIds: legacyFilledOrders.map((order) => order.id),
-        notes: [
-          "依使用者指定的績效試驗規則，原等待開盤標的改以訊號日收盤價假設成交",
-          ...legacyNotes,
-        ],
-        cash: state.account.cash,
-        equity,
-        openPositions: state.trades.filter((trade) => trade.status === "open")
-          .length,
-        queuedOrders: state.orders.filter((order) => order.status === "queued")
-          .length,
-        strategyVersion: PAPER_STRATEGY_VERSION,
-        createdAt: timestamp,
-      });
+    const existingDecision = state.decisions.find(
+      (decision) => decision.marketDate === reconciliationDate,
+    );
+    const priorSummary = existingDecision?.actionSummary ?? null;
+    const reconciledDecision: PaperDailyDecision = {
+      id: existingDecision?.id ?? `${PAPER_ACCOUNT_ID}:${reconciliationDate}`,
+      accountId: PAPER_ACCOUNT_ID,
+      marketDate: reconciliationDate,
+      actionSummary: `規則更新：盤後假設成交 ${legacyFilledOrders.length} 檔`,
+      candidatesEvaluated: existingDecision?.candidatesEvaluated ?? 0,
+      selectedOrderIds: [
+        ...new Set([
+          ...(existingDecision?.selectedOrderIds ?? []),
+          ...legacyFilledOrders.map((order) => order.id),
+        ]),
+      ],
+      notes: [
+        ...(priorSummary && !priorSummary.includes("盤後假設成交")
+          ? [`規則變更前紀錄：${priorSummary}`]
+          : []),
+        "依使用者指定的績效試驗規則，原等待開盤標的改以訊號日收盤價假設成交",
+        ...legacyNotes,
+      ],
+      cash: state.account.cash,
+      equity,
+      openPositions: state.trades.filter((trade) => trade.status === "open")
+        .length,
+      queuedOrders: state.orders.filter((order) => order.status === "queued")
+        .length,
+      strategyVersion: PAPER_STRATEGY_VERSION,
+      createdAt: existingDecision?.createdAt ?? timestamp,
+    };
+    if (existingDecision) {
+      Object.assign(existingDecision, reconciledDecision);
+    } else {
+      state.decisions.push(reconciledDecision);
     }
   }
 

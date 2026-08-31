@@ -146,6 +146,7 @@ test("existing queued selections are reconciled once at their signal-day close",
   first.orders[0].status = "queued";
   first.orders[0].filledTradeId = null;
   first.trades = [];
+  first.decisions[0].actionSummary = "挑選 1 檔，等待隔日開盤";
 
   const reconciled = advancePaperTradingState(
     first,
@@ -157,11 +158,19 @@ test("existing queued selections are reconciled once at their signal-day close",
   assert.equal(reconciled.orders[0].status, "filled");
   assert.equal(reconciled.trades.length, 1);
   assert.equal(reconciled.trades[0].entryPrice, 102);
+  assert.equal(reconciled.decisions.length, 1);
   assert.equal(
-    reconciled.decisions.filter((decision) =>
-      decision.id.includes("paper-v1.1-after-hours-close"),
-    ).length,
-    1,
+    reconciled.decisions[0].actionSummary,
+    "規則更新：盤後假設成交 1 檔",
+  );
+  assert.equal(
+    reconciled.decisions[0].strategyVersion,
+    "paper-v1.1-after-hours-close",
+  );
+  assert.ok(
+    reconciled.decisions[0].notes.includes(
+      "規則變更前紀錄：挑選 1 檔，等待隔日開盤",
+    ),
   );
 });
 
