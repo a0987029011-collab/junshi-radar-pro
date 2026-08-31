@@ -174,6 +174,35 @@ test("existing queued selections are reconciled once at their signal-day close",
   );
 });
 
+test("a previously filled after-hours trade repairs an older waiting summary", () => {
+  const filled = advancePaperTradingState(
+    createPaperTradingState("2026-08-31T00:00:00.000Z"),
+    [candidate()],
+    [{ symbol: "1001", candles: [candle("2026-08-31")] }],
+    "2026-08-31",
+    "2026-08-31T00:00:00.000Z",
+  );
+  filled.decisions[0].actionSummary = "挑選 1 檔，等待隔日開盤";
+
+  const repaired = advancePaperTradingState(
+    filled,
+    [candidate()],
+    [{ symbol: "1001", candles: [candle("2026-08-31")] }],
+    "2026-08-31",
+    "2026-08-31T01:00:00.000Z",
+  );
+  assert.equal(repaired.trades.length, 1);
+  assert.equal(
+    repaired.decisions[0].actionSummary,
+    "規則更新：盤後假設成交 1 檔",
+  );
+  assert.ok(
+    repaired.decisions[0].notes.some((note) =>
+      note.includes("盤後以 102.00 元收盤價假設成交"),
+    ),
+  );
+});
+
 test("same-day target and stop collision is conservatively recorded as stop-loss", () => {
   const candidates = [candidate()];
   const state = advancePaperTradingState(

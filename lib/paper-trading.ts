@@ -556,9 +556,36 @@ export function advancePaperTradingState(
   for (const order of legacyQueued) {
     fillAfterHoursOrder(state, order, profiles, timestamp, legacyNotes);
   }
-  const legacyFilledOrders = legacyQueued.filter(
+  const newlyFilledLegacyOrders = legacyQueued.filter(
     (order) => order.status === "filled",
   );
+  const decisionsAwaitingSummaryRepair = new Set(
+    state.decisions
+      .filter((decision) => decision.actionSummary.includes("等待隔日開盤"))
+      .map((decision) => decision.marketDate),
+  );
+  const previouslyFilledOrdersAwaitingSummaryRepair = state.orders.filter(
+    (order) => {
+      if (
+        order.status !== "filled" ||
+        !decisionsAwaitingSummaryRepair.has(order.signalDate)
+      ) {
+        return false;
+      }
+      const trade = state.trades.find(
+        (item) => item.id === order.filledTradeId,
+      );
+      return trade?.strategyVersion === PAPER_STRATEGY_VERSION;
+    },
+  );
+  const legacyFilledOrders = [
+    ...new Map(
+      [
+        ...newlyFilledLegacyOrders,
+        ...previouslyFilledOrdersAwaitingSummaryRepair,
+      ].map((order) => [order.id, order]),
+    ).values(),
+  ];
   if (legacyFilledOrders.length) {
     const reconciliationDate = state.account.lastProcessedDate ?? dataAsOf;
     const equity = rounded(
@@ -597,7 +624,18 @@ export function advancePaperTradingState(
           ? [`規則變更前紀錄：${priorSummary}`]
           : []),
         "依使用者指定的績效試驗規則，原等待開盤標的改以訊號日收盤價假設成交",
-        ...legacyNotes,
+        ...(legacyNotes.length
+          ? legacyNotes
+          : legacyFilledOrders.flatMap((order) => {
+              const trade = state.trades.find(
+                (item) => item.id === order.filledTradeId,
+              );
+              return trade
+                ? [
+                    `${trade.symbol} ${trade.name} 盤後以 ${trade.entryPrice.toFixed(2)} 元收盤價假設成交`,
+                  ]
+                : [];
+            })),
       ],
       cash: state.account.cash,
       equity,
