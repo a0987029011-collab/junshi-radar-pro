@@ -159,7 +159,7 @@ export function PaperTradingDashboard() {
             </span>
             <h2 className="mt-4 text-2xl font-semibold text-white">軍師自主模擬帳戶</h2>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-300">
-              每個交易日只用當時已知的資料決策。訊號收盤後才挑選，最早下一個交易日開盤成交；策略升級會換版本，舊紀錄不回頭改寫。
+              每個交易日只用當時已知的盤後資料決策。資料更新完成後立即選股，選中的標的一律以當日收盤價假設成交；這是比較選股盈虧的固定試驗規則，不代表真實盤後委託一定成交。
             </p>
           </div>
           <div className="rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 lg:max-w-sm">
@@ -206,9 +206,9 @@ export function PaperTradingDashboard() {
         <article className="rounded-3xl border border-amber-400/20 bg-slate-900/80 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold text-white">等待開盤的選擇</h2>
+              <h2 className="text-xl font-semibold text-white">盤後成交待處理</h2>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                不用訊號收盤價假裝成交；隔日跌回突破線下會直接取消。
+                正常情況會在同次盤後更新直接建立持股；只有缺少行情或資料異常才會留在這裡。
               </p>
             </div>
             <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-100">
@@ -257,7 +257,7 @@ export function PaperTradingDashboard() {
               ))
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-700 px-5 py-10 text-center text-sm text-slate-500">
-                目前沒有排隊買進。沒有通過條件時，保留現金也是一筆正式決策。
+                目前沒有待處理選擇。沒有通過條件時，保留現金也是一筆正式決策。
               </div>
             )}
           </div>
@@ -285,7 +285,7 @@ export function PaperTradingDashboard() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <span className="text-xs text-slate-500">
-                        {trade.entryDate} 買進 · {trade.shares} 股
+                        {trade.entryDate} 盤後假設買進 · {trade.shares} 股
                       </span>
                       <Link
                         className="mt-1 block text-lg font-semibold text-white hover:text-cyan-200"
@@ -325,7 +325,7 @@ export function PaperTradingDashboard() {
               ))
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-700 px-5 py-10 text-center text-sm text-slate-500">
-                尚未成交。第一批選擇會等下一個交易日開盤後才建立持股。
+                目前沒有模擬持股。下一次盤後若有標的通過，會以當日收盤價直接列為假設成交。
               </div>
             )}
           </div>
@@ -375,6 +375,7 @@ export function PaperTradingDashboard() {
           <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
             <li>• 起始資金 50 萬；每筆最多使用當下總資產 10%，不是固定 5 萬。</li>
             <li>• 最多同時 3 檔，單日最多新增 2 檔，避免持股越買越亂。</li>
+            <li>• 盤後資料完成後立即選股；所有入選標的固定以當日收盤價假設成交，不模擬排隊順位。</li>
             <li>• 一般目標為費稅與滑價後淨利 10%；一般停損為買進價下方 10%。</li>
             <li>• 曾漲至少 5% 後出現黑 K 與動能弱化，可在隔日開盤提前獲利。</li>
             <li>• 買進前 5 日若黑 K 收破前一根最低價，可在隔日開盤提前止損。</li>
@@ -383,7 +384,7 @@ export function PaperTradingDashboard() {
         <article className="rounded-3xl border border-amber-400/20 bg-slate-900/80 p-5 sm:p-6">
           <h2 className="text-xl font-semibold text-amber-100">成本與保守假設</h2>
           <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
-            <li>• 買賣兩側各計 0.1% 滑價，另計券商手續費與賣出證交稅。</li>
+            <li>• 買進固定採當日收盤價、不另加滑價；賣出計 0.1% 保守滑價，另計券商手續費與證交稅。</li>
             <li>• 同一根 K 同時碰到停損與目標時，保守視為先停損。</li>
             <li>• 依收盤 K 棒判斷的提前離場，一律下一交易日開盤才成交。</li>
             <li>• 這個區域不串券商、不讀取你的真實持股，也不會產生任何真實委託。</li>

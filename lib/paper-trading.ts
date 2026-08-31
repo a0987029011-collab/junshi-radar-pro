@@ -11,7 +11,7 @@ import type { SignalResearchObservation } from "./signal-research.ts";
 import type { Candle } from "./types.ts";
 
 export const PAPER_ACCOUNT_ID = "junshi-paper-account";
-export const PAPER_STRATEGY_VERSION = "paper-v1.0";
+export const PAPER_STRATEGY_VERSION = "paper-v1.1-after-hours-close";
 export const PAPER_TRADING_START_DATE = "2026-08-31";
 export const PAPER_STARTING_CASH = 500_000;
 
@@ -24,7 +24,8 @@ export const PAPER_RULES = {
   earlyReviewProfitPercent: 5,
   earlyStopReviewDays: 5,
   maximumHoldingDays: 20,
-  slippagePercentEachSide: 0.1,
+  entrySlippagePercent: 0,
+  exitSlippagePercent: 0.1,
   commissionDiscount: DEFAULT_COMMISSION_DISCOUNT,
   minimumSelectionScore: 70,
 } as const;
@@ -343,22 +344,6 @@ function currentEquity(
     }, account.cash);
 }
 
-function equityAtOpen(
-  account: PaperAccount,
-  trades: PaperTrade[],
-  profiles: Map<string, PaperMarketProfile>,
-  date: string,
-) {
-  return trades
-    .filter((trade) => trade.status === "open")
-    .reduce((equity, trade) => {
-      const profile = profiles.get(trade.symbol);
-      const current = candleByDate(profile, date);
-      const previous = profile?.candles.filter((candle) => candle.time < date).at(-1);
-      return equity + trade.shares * (current?.open ?? previous?.close ?? trade.entryPrice);
-    }, account.cash);
-}
-
 function exitTrade(
   trade: PaperTrade,
   marketPrice: number,
@@ -366,7 +351,7 @@ function exitTrade(
   reason: PaperExitReason,
   timestamp: string,
 ) {
-  const slippage = PAPER_RULES.slippagePercentEachSide / 100;
+  const slippage = PAPER_RULES.exitSlippagePercent / 100;
   const exitPrice = roundDownToTaiwanStockTick(marketPrice * (1 - slippage));
   const grossAmount = trade.shares * exitPrice;
   const exitCommission = calculateBrokerCommission(
@@ -391,6 +376,127 @@ function exitTrade(
     realizedReturnPercent: rounded((realizedProfit / trade.totalCost) * 100),
     updatedAt: timestamp,
   };
+}
+
+function fillAfterHoursOrder(
+  state: PaperTradingState,
+  order: PaperOrder,
+  profiles: Map<string, PaperMarketProfile>,
+  timestamp: string,
+  notes: string[],
+) {
+  const candle = candleByDate(profiles.get(order.symbol), order.signalDate);
+  if (!candle) {
+    notes.push(`${order.symbol} ${order.name} 缺少訊號日行情，保留待處理`);
+    return false;
+  }
+  const openTrades = state.trades.filter((trade) => trade.status === "open");
+  if (openTrades.length >= PAPER_RULES.maximumPositions) {
+    order.status = "skipped";
+    order.skippedReason = "模擬帳戶已達持股上限";
+    order.updatedAt = timestamp;
+    notes.push(`${order.symbol} 因持股上限取消進場`);
+    return false;
+  }
+
+  const entryPrice = roundUpToTaiwanStockTick(candle.close);
+  const equityBeforeEntry = currentEquity(
+    state.account,
+    state.trades,
+    profiles,
+    order.signalDate,
+  );
+  const allocationLimit =
+    equityBeforeEntry * (PAPER_RULES.maximumAllocationPercent / 100);
+  let shares = Math.max(0, Math.floor(allocationLimit / entryPrice));
+  while (shares > 0) {
+    const gross = shares * entryPrice;
+    const commission = calculateBrokerCommission(
+      gross,
+      PAPER_RULES.commissionDiscount,
+    );
+    const totalCost = gross + commission;
+    if (totalCost <= allocationLimit && totalCost <= state.account.cash) break;
+    shares -= 1;
+  }
+  if (shares < 1) {
+    order.status = "skipped";
+    order.skippedReason = "依風險與現金上限無法配置至少 1 股";
+    order.updatedAt = timestamp;
+    notes.push(`${order.symbol} 因資金風險限制取消進場`);
+    return false;
+  }
+
+  const grossAmount = shares * entryPrice;
+  const entryCommission = calculateBrokerCommission(
+    grossAmount,
+    PAPER_RULES.commissionDiscount,
+  );
+  const totalCost = grossAmount + entryCommission;
+  const targetExecutionPrice = calculateTargetSalePrice(
+    shares,
+    totalCost,
+    PAPER_RULES.targetNetReturnPercent,
+    PAPER_RULES.commissionDiscount,
+  );
+  const exitSlippage = PAPER_RULES.exitSlippagePercent / 100;
+  const targetPrice = roundUpToTaiwanStockTick(
+    targetExecutionPrice / (1 - exitSlippage),
+  );
+  const stopPrice = roundDownToTaiwanStockTick(
+    entryPrice * (1 - PAPER_RULES.initialStopLossPercent / 100),
+  );
+  const tradeId = `paper-trade:${order.observationKey}`;
+  const assumptionReason = "盤後資料完成後，以訊號日收盤價假設全部成交";
+  const trade: PaperTrade = {
+    id: tradeId,
+    accountId: PAPER_ACCOUNT_ID,
+    orderId: order.id,
+    symbol: order.symbol,
+    name: order.name,
+    sector: order.sector,
+    signalDate: order.signalDate,
+    entryDate: order.signalDate,
+    entryPrice,
+    shares,
+    entryCommission: rounded(entryCommission),
+    totalCost: rounded(totalCost),
+    stopPrice,
+    targetPrice,
+    targetNetReturnPercent: PAPER_RULES.targetNetReturnPercent,
+    status: "open",
+    exitDate: null,
+    exitPrice: null,
+    exitCommission: null,
+    transactionTax: null,
+    netSaleProceeds: null,
+    exitReason: null,
+    queuedExitReason: null,
+    queuedExitSignalDate: null,
+    realizedProfit: null,
+    realizedReturnPercent: null,
+    holdingDays: 0,
+    maximumFavorablePercent: 0,
+    maximumAdversePercent: 0,
+    selectionScore: order.selectionScore,
+    selectionReasons: order.selectionReasons.includes(assumptionReason)
+      ? [...order.selectionReasons]
+      : [...order.selectionReasons, assumptionReason],
+    strategyVersion: PAPER_STRATEGY_VERSION,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  state.trades.push(trade);
+  state.account.cash = rounded(state.account.cash - totalCost);
+  state.account.strategyVersion = PAPER_STRATEGY_VERSION;
+  state.account.updatedAt = timestamp;
+  order.status = "filled";
+  order.filledTradeId = tradeId;
+  order.updatedAt = timestamp;
+  notes.push(
+    `${order.symbol} ${order.name} 盤後以 ${entryPrice.toFixed(2)} 元收盤價假設成交`,
+  );
+  return true;
 }
 
 function uniqueMarketDates(
@@ -433,6 +539,68 @@ export function advancePaperTradingState(
     dataAsOf,
   );
 
+  state.account.strategyVersion = PAPER_STRATEGY_VERSION;
+  const legacyNotes: string[] = [];
+  const legacyQueued = state.orders
+    .filter(
+      (order) =>
+        order.status === "queued" &&
+        Boolean(state.account.lastProcessedDate) &&
+        order.signalDate <= (state.account.lastProcessedDate ?? ""),
+    )
+    .sort(
+      (left, right) =>
+        right.selectionScore - left.selectionScore ||
+        left.createdAt.localeCompare(right.createdAt),
+    );
+  for (const order of legacyQueued) {
+    fillAfterHoursOrder(state, order, profiles, timestamp, legacyNotes);
+  }
+  const legacyFilledOrders = legacyQueued.filter(
+    (order) => order.status === "filled",
+  );
+  if (legacyFilledOrders.length) {
+    const reconciliationDate = state.account.lastProcessedDate ?? dataAsOf;
+    const equity = rounded(
+      currentEquity(state.account, state.trades, profiles, reconciliationDate),
+    );
+    state.account.maximumEquity = Math.max(state.account.maximumEquity, equity);
+    const drawdown =
+      state.account.maximumEquity > 0
+        ? ((equity - state.account.maximumEquity) /
+            state.account.maximumEquity) *
+          100
+        : 0;
+    state.account.maximumDrawdownPercent = Math.min(
+      state.account.maximumDrawdownPercent,
+      rounded(drawdown),
+    );
+    state.account.updatedAt = timestamp;
+    const reconciliationId = `${PAPER_ACCOUNT_ID}:${reconciliationDate}:${PAPER_STRATEGY_VERSION}`;
+    if (!state.decisions.some((decision) => decision.id === reconciliationId)) {
+      state.decisions.push({
+        id: reconciliationId,
+        accountId: PAPER_ACCOUNT_ID,
+        marketDate: reconciliationDate,
+        actionSummary: `規則更新：盤後假設成交 ${legacyFilledOrders.length} 檔`,
+        candidatesEvaluated: 0,
+        selectedOrderIds: legacyFilledOrders.map((order) => order.id),
+        notes: [
+          "依使用者指定的績效試驗規則，原等待開盤標的改以訊號日收盤價假設成交",
+          ...legacyNotes,
+        ],
+        cash: state.account.cash,
+        equity,
+        openPositions: state.trades.filter((trade) => trade.status === "open")
+          .length,
+        queuedOrders: state.orders.filter((order) => order.status === "queued")
+          .length,
+        strategyVersion: PAPER_STRATEGY_VERSION,
+        createdAt: timestamp,
+      });
+    }
+  }
+
   for (const marketDate of marketDates) {
     const notes: string[] = [];
     const selectedOrderIds: string[] = [];
@@ -448,115 +616,7 @@ export function advancePaperTradingState(
           left.createdAt.localeCompare(right.createdAt),
       );
     for (const order of queued) {
-      const openTrades = state.trades.filter((trade) => trade.status === "open");
-      const candle = candleByDate(profiles.get(order.symbol), marketDate);
-      if (!candle) {
-        notes.push(`${order.symbol} ${order.name} 缺少當日行情，保留排隊`);
-        continue;
-      }
-      if (openTrades.length >= PAPER_RULES.maximumPositions) {
-        order.status = "skipped";
-        order.skippedReason = "模擬帳戶已達持股上限";
-        order.updatedAt = timestamp;
-        notes.push(`${order.symbol} 因持股上限取消進場`);
-        continue;
-      }
-      const slippage = PAPER_RULES.slippagePercentEachSide / 100;
-      const entryPrice = roundUpToTaiwanStockTick(candle.open * (1 + slippage));
-      if (candle.open <= order.linePrice) {
-        order.status = "skipped";
-        order.skippedReason = "隔日開盤跌回突破線下，原訊號失效";
-        order.updatedAt = timestamp;
-        notes.push(`${order.symbol} 開盤跌回突破線下，取消進場`);
-        continue;
-      }
-      const stopPrice = roundDownToTaiwanStockTick(
-        entryPrice * (1 - PAPER_RULES.initialStopLossPercent / 100),
-      );
-      const equityBeforeEntry = equityAtOpen(
-        state.account,
-        state.trades,
-        profiles,
-        marketDate,
-      );
-      const allocationLimit =
-        equityBeforeEntry * (PAPER_RULES.maximumAllocationPercent / 100);
-      const sharesByAllocation = Math.floor(allocationLimit / entryPrice);
-      let shares = Math.max(0, sharesByAllocation);
-      while (shares > 0) {
-        const gross = shares * entryPrice;
-        const commission = calculateBrokerCommission(
-          gross,
-          PAPER_RULES.commissionDiscount,
-        );
-        if (gross + commission <= state.account.cash) break;
-        shares -= 1;
-      }
-      if (shares < 1) {
-        order.status = "skipped";
-        order.skippedReason = "依風險與現金上限無法配置至少 1 股";
-        order.updatedAt = timestamp;
-        notes.push(`${order.symbol} 因資金風險限制取消進場`);
-        continue;
-      }
-      const grossAmount = shares * entryPrice;
-      const entryCommission = calculateBrokerCommission(
-        grossAmount,
-        PAPER_RULES.commissionDiscount,
-      );
-      const totalCost = grossAmount + entryCommission;
-      const targetExecutionPrice = calculateTargetSalePrice(
-        shares,
-        totalCost,
-        PAPER_RULES.targetNetReturnPercent,
-        PAPER_RULES.commissionDiscount,
-      );
-      const targetPrice = roundUpToTaiwanStockTick(
-        targetExecutionPrice / (1 - slippage),
-      );
-      const tradeId = `paper-trade:${order.observationKey}`;
-      const trade: PaperTrade = {
-        id: tradeId,
-        accountId: PAPER_ACCOUNT_ID,
-        orderId: order.id,
-        symbol: order.symbol,
-        name: order.name,
-        sector: order.sector,
-        signalDate: order.signalDate,
-        entryDate: marketDate,
-        entryPrice,
-        shares,
-        entryCommission: rounded(entryCommission),
-        totalCost: rounded(totalCost),
-        stopPrice,
-        targetPrice,
-        targetNetReturnPercent: PAPER_RULES.targetNetReturnPercent,
-        status: "open",
-        exitDate: null,
-        exitPrice: null,
-        exitCommission: null,
-        transactionTax: null,
-        netSaleProceeds: null,
-        exitReason: null,
-        queuedExitReason: null,
-        queuedExitSignalDate: null,
-        realizedProfit: null,
-        realizedReturnPercent: null,
-        holdingDays: 0,
-        maximumFavorablePercent: 0,
-        maximumAdversePercent: 0,
-        selectionScore: order.selectionScore,
-        selectionReasons: [...order.selectionReasons],
-        strategyVersion: order.strategyVersion,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      state.trades.push(trade);
-      state.account.cash = rounded(state.account.cash - totalCost);
-      order.status = "filled";
-      order.filledTradeId = tradeId;
-      order.updatedAt = timestamp;
-      notes.push(`${order.symbol} ${order.name} 依隔日開盤價紙上買進`);
+      fillAfterHoursOrder(state, order, profiles, timestamp, notes);
     }
 
     for (let index = 0; index < state.trades.length; index += 1) {
@@ -731,11 +791,12 @@ export function advancePaperTradingState(
       selected.push(item);
       selectedSectors.add(item.observation.sector);
     }
+    let filledSelections = 0;
     for (const item of selected) {
       const observation = item.observation;
       const orderId = `paper-order:${observation.observationKey}`;
       if (state.orders.some((order) => order.id === orderId)) continue;
-      state.orders.push({
+      const order: PaperOrder = {
         id: orderId,
         accountId: PAPER_ACCOUNT_ID,
         observationKey: observation.observationKey,
@@ -753,15 +814,23 @@ export function advancePaperTradingState(
         skippedReason: null,
         createdAt: timestamp,
         updatedAt: timestamp,
-      });
+      };
+      state.orders.push(order);
       selectedOrderIds.push(orderId);
+      if (fillAfterHoursOrder(state, order, profiles, timestamp, notes)) {
+        filledSelections += 1;
+      }
     }
     if (todaysCandidates.length && selected.length === 0) {
       notes.push("今日訊號均未通過紙上實驗分數或風險限制，保持現金");
     } else if (!todaysCandidates.length) {
       notes.push("今日沒有收盤確認訊號，保持現金");
+    } else if (filledSelections) {
+      notes.push(
+        `挑選 ${filledSelections} 檔，盤後全部以當日收盤價假設成交`,
+      );
     } else if (selected.length) {
-      notes.push(`挑選 ${selected.length} 檔，等下一交易日開盤確認後才紙上成交`);
+      notes.push(`挑選 ${selected.length} 檔，但盤後成交資料仍待處理`);
     }
 
     const equity = rounded(
@@ -787,8 +856,10 @@ export function advancePaperTradingState(
       id: `${PAPER_ACCOUNT_ID}:${marketDate}`,
       accountId: PAPER_ACCOUNT_ID,
       marketDate,
-      actionSummary: selected.length
-        ? `挑選 ${selected.length} 檔，等待隔日開盤`
+      actionSummary: filledSelections
+        ? `挑選並盤後假設成交 ${filledSelections} 檔`
+        : selected.length
+          ? `挑選 ${selected.length} 檔，成交待處理`
         : notes.some((note) => note.includes("出場"))
           ? "依既定規則執行出場"
           : "今日觀望",
@@ -824,7 +895,7 @@ export function buildPaperTradingDashboard(
       const estimatedExitPrice = currentPrice
         ? roundDownToTaiwanStockTick(
             currentPrice *
-              (1 - PAPER_RULES.slippagePercentEachSide / 100),
+              (1 - PAPER_RULES.exitSlippagePercent / 100),
           )
         : null;
       const gross = estimatedExitPrice ? trade.shares * estimatedExitPrice : 0;
@@ -894,7 +965,11 @@ export function buildPaperTradingDashboard(
     ),
     decisions: state.decisions
       .slice()
-      .sort((left, right) => right.marketDate.localeCompare(left.marketDate))
+      .sort(
+        (left, right) =>
+          right.marketDate.localeCompare(left.marketDate) ||
+          right.createdAt.localeCompare(left.createdAt),
+      )
       .slice(0, 60),
     rules: PAPER_RULES,
     readiness: {
@@ -912,6 +987,7 @@ export function paperTradingCostAssumptions() {
     commissionDiscount: PAPER_RULES.commissionDiscount,
     minimumCommission: MINIMUM_COMMISSION,
     transactionTaxPercent: STOCK_TRANSACTION_TAX_RATE * 100,
-    slippagePercentEachSide: PAPER_RULES.slippagePercentEachSide,
+    entrySlippagePercent: PAPER_RULES.entrySlippagePercent,
+    exitSlippagePercent: PAPER_RULES.exitSlippagePercent,
   };
 }

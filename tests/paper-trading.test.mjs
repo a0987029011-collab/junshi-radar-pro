@@ -5,6 +5,7 @@ import {
   advancePaperTradingState,
   createPaperTradingState,
 } from "../lib/paper-trading.ts";
+import { calculateBrokerCommission } from "../lib/position-transactions.ts";
 
 function snapshot(timeframe, overrides = {}) {
   return {
@@ -99,43 +100,69 @@ function candle(time, { open = 100, high = 103, low = 98, close = 102, volume = 
   return { time, open, high, low, close, volume, macd: 1, signal: 0.5, histogram, dpo };
 }
 
-test("paper account starts at 500,000 and limits each entry to 10% of current equity", () => {
+test("after-hours paper entries fill at the signal close and stay within 10% of current equity", () => {
   const candidates = [candidate()];
-  const queued = advancePaperTradingState(
-    createPaperTradingState("2026-08-31T00:00:00.000Z"),
+  const initial = createPaperTradingState("2026-08-31T00:00:00.000Z");
+  initial.account.cash = 600_000;
+  initial.account.maximumEquity = 600_000;
+  const filled = advancePaperTradingState(
+    initial,
     candidates,
     [{ symbol: "1001", candles: [candle("2026-08-31")] }],
     "2026-08-31",
     "2026-08-31T00:00:00.000Z",
   );
-  assert.equal(queued.account.startingCash, 500_000);
-  assert.equal(queued.orders.length, 1);
-  assert.equal(queued.orders[0].status, "queued");
-
-  queued.account.cash = 600_000;
-  queued.account.maximumEquity = 600_000;
-  const filled = advancePaperTradingState(
-    queued,
-    candidates,
-    [
-      {
-        symbol: "1001",
-        candles: [
-          candle("2026-08-31"),
-          candle("2026-09-01", { open: 100, high: 103, low: 99, close: 102 }),
-        ],
-      },
-    ],
-    "2026-09-01",
-    "2026-09-01T06:00:00.000Z",
-  );
+  assert.equal(filled.account.startingCash, 500_000);
+  assert.equal(filled.orders.length, 1);
+  assert.equal(filled.orders[0].status, "filled");
   const trade = filled.trades[0];
   assert.ok(trade);
-  assert.ok(trade.entryPrice * trade.shares <= 60_000);
-  assert.ok(trade.entryPrice * (trade.shares + 1) > 60_000);
+  assert.equal(trade.entryDate, "2026-08-31");
+  assert.equal(trade.entryPrice, 102);
+  assert.ok(trade.totalCost <= 60_000);
+  const nextGross = trade.entryPrice * (trade.shares + 1);
+  assert.ok(
+    nextGross +
+      calculateBrokerCommission(nextGross, PAPER_RULES.commissionDiscount) >
+      60_000,
+  );
   assert.equal(PAPER_RULES.maximumAllocationPercent, 10);
   assert.equal(PAPER_RULES.targetNetReturnPercent, 10);
   assert.equal(PAPER_RULES.initialStopLossPercent, 10);
+  assert.equal(PAPER_RULES.entrySlippagePercent, 0);
+  assert.equal(PAPER_RULES.exitSlippagePercent, 0.1);
+});
+
+test("existing queued selections are reconciled once at their signal-day close", () => {
+  const first = advancePaperTradingState(
+    createPaperTradingState("2026-08-31T00:00:00.000Z"),
+    [candidate()],
+    [{ symbol: "1001", candles: [candle("2026-08-31")] }],
+    "2026-08-31",
+    "2026-08-31T00:00:00.000Z",
+  );
+  first.account.cash = 500_000;
+  first.account.maximumEquity = 500_000;
+  first.orders[0].status = "queued";
+  first.orders[0].filledTradeId = null;
+  first.trades = [];
+
+  const reconciled = advancePaperTradingState(
+    first,
+    [candidate()],
+    [{ symbol: "1001", candles: [candle("2026-08-31")] }],
+    "2026-08-31",
+    "2026-08-31T01:00:00.000Z",
+  );
+  assert.equal(reconciled.orders[0].status, "filled");
+  assert.equal(reconciled.trades.length, 1);
+  assert.equal(reconciled.trades[0].entryPrice, 102);
+  assert.equal(
+    reconciled.decisions.filter((decision) =>
+      decision.id.includes("paper-v1.1-after-hours-close"),
+    ).length,
+    1,
+  );
 });
 
 test("same-day target and stop collision is conservatively recorded as stop-loss", () => {
